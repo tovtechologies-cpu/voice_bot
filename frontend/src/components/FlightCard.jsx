@@ -1,5 +1,5 @@
 import React from 'react';
-import { Plane, Clock, ArrowRight } from 'lucide-react';
+import { Plane, Clock, ArrowRight, AlertCircle } from 'lucide-react';
 
 const FlightCard = ({ flight, isSelected, onSelect, t }) => {
   const getTierClass = (tier) => {
@@ -42,17 +42,28 @@ const FlightCard = ({ flight, isSelected, onSelect, t }) => {
       data-testid="flight-option-card"
       onClick={() => onSelect(flight)}
       className={`
-        flight-card cursor-pointer
+        flight-card cursor-pointer relative
         ${isSelected ? 'selected' : ''}
       `}
     >
+      {/* Demo Data Badge */}
+      {flight.is_demo && (
+        <div 
+          className="absolute top-2 right-2 flex items-center gap-1 px-2 py-1 rounded-full bg-[rgba(255,204,0,0.15)] border border-[rgba(255,204,0,0.3)]"
+          data-testid="demo-data-badge"
+        >
+          <AlertCircle className="w-3 h-3 text-[#FFCC00]" />
+          <span className="text-[10px] text-[#FFCC00] font-medium">Demo</span>
+        </div>
+      )}
+
       {/* Tier Badge */}
       <div className="flex justify-between items-start mb-4">
         <div className="flex items-center gap-2">
           <Plane className="w-5 h-5 text-[#6C63FF]" />
           <span className="font-semibold text-[#F8FAFC]">{flight.airline}</span>
         </div>
-        <span className={`badge-pill text-xs ${getTierClass(flight.tier)}`}>
+        <span className={`badge-pill text-xs ${getTierClass(flight.tier)} ${flight.is_demo ? 'mr-16' : ''}`}>
           {getTierLabel(flight.tier)}
         </span>
       </div>

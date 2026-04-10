@@ -9,7 +9,7 @@ import IntentBadges from '../components/IntentBadges';
 import FlightResults from '../components/FlightResults';
 import PaymentModal from '../components/PaymentModal';
 import ConfirmationModal from '../components/ConfirmationModal';
-import { parseIntent, searchFlights, createBooking, createUser } from '../api';
+import { parseIntent, searchFlights, createUser } from '../api';
 import { Send, Loader2 } from 'lucide-react';
 
 const HomePage = () => {
@@ -37,6 +37,12 @@ const HomePage = () => {
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [booking, setBooking] = useState(null);
   const [error, setError] = useState(null);
+  const [currentUserId, setCurrentUserId] = useState(userId);
+
+  // Sync userId from hook
+  useEffect(() => {
+    setCurrentUserId(userId);
+  }, [userId]);
 
   // Process voice input when transcript changes
   useEffect(() => {
@@ -53,6 +59,25 @@ const HomePage = () => {
       clearTranscript();
       setError(null);
       startListening();
+    }
+  };
+
+  const ensureUserExists = async () => {
+    if (currentUserId) return currentUserId;
+    
+    try {
+      const newUser = await createUser({
+        first_name: profile?.first_name || 'Guest',
+        last_name: profile?.last_name || 'User',
+        phone: profile?.phone || '',
+        email: profile?.email || '',
+      });
+      setCurrentUserId(newUser.id);
+      saveProfile(newUser, newUser.id);
+      return newUser.id;
+    } catch (err) {
+      console.error('Failed to create user:', err);
+      return null;
     }
   };
 
@@ -93,43 +118,17 @@ const HomePage = () => {
     }
   };
 
-  const handleSelectFlight = (flight) => {
+  const handleSelectFlight = async (flight) => {
     setSelectedFlight(flight);
+    // Ensure user exists before showing payment
+    await ensureUserExists();
     setShowPayment(true);
   };
 
-  const handlePaymentSuccess = async (paymentResult, paymentMethod) => {
+  const handlePaymentSuccess = async (result, paymentMethod) => {
     setShowPayment(false);
-    
-    try {
-      // Ensure user exists
-      let currentUserId = userId;
-      if (!currentUserId) {
-        // Create a temporary user
-        const newUser = await createUser({
-          first_name: profile?.first_name || 'Guest',
-          last_name: profile?.last_name || 'User',
-          phone: profile?.phone || '',
-          email: profile?.email || '',
-        });
-        currentUserId = newUser.id;
-        saveProfile(newUser, newUser.id);
-      }
-
-      // Create booking
-      const newBooking = await createBooking({
-        user_id: currentUserId,
-        flight_id: selectedFlight.id,
-        passengers: intent?.passengers || 1,
-        payment_method: paymentMethod,
-      });
-
-      setBooking(newBooking);
-      setShowConfirmation(true);
-    } catch (err) {
-      console.error('Booking error:', err);
-      setError(t('errorGeneric'));
-    }
+    setBooking(result);
+    setShowConfirmation(true);
   };
 
   const handleConfirmationClose = () => {
@@ -248,7 +247,9 @@ const HomePage = () => {
         onClose={() => setShowPayment(false)}
         flight={selectedFlight}
         passengers={intent?.passengers || 1}
-        userId={userId}
+        userId={currentUserId}
+        userProfile={profile}
+        intent={intent}
         onSuccess={handlePaymentSuccess}
         t={t}
       />

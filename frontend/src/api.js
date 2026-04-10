@@ -8,6 +8,7 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  timeout: 10000, // 10 second timeout
 });
 
 // Intent Parsing
@@ -59,7 +60,23 @@ export const getBookingById = async (bookingId) => {
   return response.data;
 };
 
-// Payments
+// Payments - New Flow
+export const initiatePayment = async (paymentData) => {
+  const response = await api.post('/payments/initiate', paymentData);
+  return response.data;
+};
+
+export const checkPaymentStatus = async (paymentReference) => {
+  const response = await api.post('/payments/status', { payment_reference: paymentReference });
+  return response.data;
+};
+
+export const completePayment = async (bookingId, paymentReference) => {
+  const response = await api.post(`/payments/complete?booking_id=${bookingId}&payment_reference=${paymentReference}`);
+  return response.data;
+};
+
+// Legacy payment endpoints (for backward compatibility)
 export const processMomoPayment = async (paymentData) => {
   const response = await api.post('/payments/momo', paymentData);
   return response.data;
@@ -82,6 +99,16 @@ export const sendWhatsAppTicket = async (phone, bookingId) => {
     booking_id: bookingId,
   });
   return response.data;
+};
+
+// Tickets
+export const getTicketUrl = (filename) => {
+  return `${API}/tickets/${filename}`;
+};
+
+export const downloadTicket = async (ticketUrl) => {
+  const fullUrl = `${BACKEND_URL}${ticketUrl}`;
+  window.open(fullUrl, '_blank');
 };
 
 // Cities

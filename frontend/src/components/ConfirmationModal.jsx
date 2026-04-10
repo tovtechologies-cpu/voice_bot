@@ -1,70 +1,93 @@
 import React, { useState, useEffect } from 'react';
-import { Check, MessageCircle, Download, Sparkles, X } from 'lucide-react';
-import { sendWhatsAppTicket } from '../api';
+import { Check, MessageCircle, Download, Sparkles, X, AlertCircle } from 'lucide-react';
+import { sendWhatsAppTicket, downloadTicket } from '../api';
+import { toast } from 'sonner';
 
 const ConfirmationModal = ({ isOpen, onClose, booking, userPhone, t }) => {
   const [showConfetti, setShowConfetti] = useState(false);
-  const [whatsAppSent, setWhatsAppSent] = useState(false);
-  const [isSending, setIsSending] = useState(false);
+  const [whatsAppStatus, setWhatsAppStatus] = useState('idle'); // idle, sending, sent, failed
+  const [phoneInput, setPhoneInput] = useState(userPhone || '');
 
   useEffect(() => {
     if (isOpen) {
       setShowConfetti(true);
+      setWhatsAppStatus('idle');
+      setPhoneInput(userPhone || '');
       const timer = setTimeout(() => setShowConfetti(false), 3000);
       return () => clearTimeout(timer);
     }
-  }, [isOpen]);
+  }, [isOpen, userPhone]);
 
   if (!isOpen || !booking) return null;
 
+  const bookingData = booking.booking || booking;
+  const bookingRef = bookingData.booking_ref || bookingData.qr_code || 'TRV-XXXXXX';
+  const ticketUrl = booking.ticket_url || bookingData.ticket_url;
+
   const handleSendWhatsApp = async () => {
-    if (!userPhone) {
-      alert(t('enterPhone'));
+    if (!phoneInput || phoneInput.length < 8) {
+      toast.error(t('enterPhone'));
       return;
     }
     
-    setIsSending(true);
+    setWhatsAppStatus('sending');
     try {
-      await sendWhatsAppTicket(userPhone, booking.id);
-      setWhatsAppSent(true);
+      const result = await sendWhatsAppTicket(phoneInput, bookingData.id);
+      
+      if (result.status === 'sent') {
+        setWhatsAppStatus('sent');
+        toast.success(t('successWhatsApp'));
+      } else if (result.status === 'simulated') {
+        setWhatsAppStatus('sent');
+        toast.success('WhatsApp delivery simulated - download your ticket below');
+      } else {
+        throw new Error('WhatsApp delivery failed');
+      }
     } catch (err) {
       console.error('WhatsApp send failed:', err);
-    } finally {
-      setIsSending(false);
+      setWhatsAppStatus('failed');
+      toast.error('WhatsApp delivery failed — your ticket was downloaded locally');
+      // Auto-download on failure
+      if (ticketUrl) {
+        downloadTicket(ticketUrl);
+      }
     }
   };
 
   const handleDownloadPDF = () => {
-    // Create a simple text-based ticket (in real app, would generate PDF)
-    const ticketContent = `
+    if (ticketUrl) {
+      downloadTicket(ticketUrl);
+    } else {
+      // Fallback: create simple text ticket
+      const ticketContent = `
 TRAVELIO TICKET
 ================
-Booking Reference: ${booking.qr_code}
+Booking Reference: ${bookingRef}
 
-Flight: ${booking.flight_number}
-Airline: ${booking.airline}
-Route: ${booking.origin} → ${booking.destination}
-Departure: ${new Date(booking.departure_time).toLocaleString()}
-Arrival: ${new Date(booking.arrival_time).toLocaleString()}
+Flight: ${bookingData.flight_number || 'N/A'}
+Airline: ${bookingData.airline || 'N/A'}
+Route: ${bookingData.origin || ''} → ${bookingData.destination || ''}
+Departure: ${bookingData.departure_time ? new Date(bookingData.departure_time).toLocaleString() : 'N/A'}
 
-Passengers: ${booking.passengers}
-Total Price: ${booking.price.toLocaleString()} ${booking.currency}
+Passengers: ${bookingData.passengers || 1}
+Total Price: ${(bookingData.price || 0).toLocaleString()} ${bookingData.currency || 'XOF'}
 
-Status: ${booking.status.toUpperCase()}
-Payment: ${booking.payment_status.toUpperCase()}
+Status: CONFIRMED
+Payment: COMPLETED
 
 Thank you for choosing Travelio!
-    `;
+      `;
 
-    const blob = new Blob([ticketContent], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `travelio-ticket-${booking.qr_code}.txt`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+      const blob = new Blob([ticketContent], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `travelio-ticket-${bookingRef}.txt`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
   };
 
   return (
@@ -89,7 +112,7 @@ Thank you for choosing Travelio!
       )}
 
       <div 
-        className="glass-card w-full max-w-md mx-4 rounded-2xl overflow-hidden animate-[fadeSlideUp_0.3s_ease]"
+        className="glass-card w-full max-w-md mx-4 rounded-2xl overflow-hidden animate-[fadeSlideUp_0.3s_ease] max-h-[90vh] overflow-y-auto"
         data-testid="confirmation-modal"
       >
         {/* Header */}
@@ -114,13 +137,13 @@ Thank you for choosing Travelio!
 
         {/* Booking Details */}
         <div className="p-6 space-y-4">
-          {/* QR Code Placeholder */}
+          {/* QR Code / Booking Ref */}
           <div className="flex justify-center">
             <div className="qr-container">
               <div className="w-32 h-32 bg-[#111827] rounded-lg flex items-center justify-center">
                 <div className="text-center">
                   <div className="text-xs text-[#94A3B8] mb-1">{t('bookingRef')}</div>
-                  <div className="text-lg font-bold text-[#6C63FF]">{booking.qr_code}</div>
+                  <div className="text-lg font-bold text-[#6C63FF]">{bookingRef}</div>
                 </div>
               </div>
             </div>
@@ -129,21 +152,21 @@ Thank you for choosing Travelio!
           {/* Flight Info */}
           <div className="glass-card p-4">
             <div className="flex justify-between items-center mb-2">
-              <span className="text-[#94A3B8] text-sm">{booking.airline}</span>
-              <span className="text-[#94A3B8] text-sm">{booking.flight_number}</span>
+              <span className="text-[#94A3B8] text-sm">{bookingData.airline || 'Airline'}</span>
+              <span className="text-[#94A3B8] text-sm">{bookingData.flight_number || ''}</span>
             </div>
             <div className="flex justify-between items-center">
               <div>
-                <div className="text-xl font-bold text-[#F8FAFC]">{booking.origin}</div>
+                <div className="text-xl font-bold text-[#F8FAFC]">{bookingData.origin || 'DSS'}</div>
                 <div className="text-xs text-[#94A3B8]">
-                  {new Date(booking.departure_time).toLocaleString()}
+                  {bookingData.departure_time ? new Date(bookingData.departure_time).toLocaleString() : ''}
                 </div>
               </div>
               <div className="text-[#6C63FF]">→</div>
               <div className="text-right">
-                <div className="text-xl font-bold text-[#F8FAFC]">{booking.destination}</div>
+                <div className="text-xl font-bold text-[#F8FAFC]">{bookingData.destination || 'ABJ'}</div>
                 <div className="text-xs text-[#94A3B8]">
-                  {new Date(booking.arrival_time).toLocaleString()}
+                  {bookingData.arrival_time ? new Date(bookingData.arrival_time).toLocaleString() : ''}
                 </div>
               </div>
             </div>
@@ -153,24 +176,52 @@ Thank you for choosing Travelio!
           <div className="text-center">
             <div className="text-sm text-[#94A3B8]">Total</div>
             <div className="text-2xl font-bold text-[#00D4FF]">
-              {booking.price.toLocaleString()} {booking.currency}
+              {(bookingData.price || 0).toLocaleString()} {bookingData.currency || 'XOF'}
             </div>
           </div>
+
+          {/* Phone Input for WhatsApp */}
+          {whatsAppStatus !== 'sent' && (
+            <div className="space-y-2">
+              <label className="text-sm text-[#94A3B8]">WhatsApp Number</label>
+              <input
+                type="tel"
+                value={phoneInput}
+                onChange={(e) => setPhoneInput(e.target.value)}
+                placeholder="+221 7X XXX XX XX"
+                className="input-dark w-full"
+                data-testid="whatsapp-phone-input"
+              />
+            </div>
+          )}
+
+          {/* WhatsApp Failed Notice */}
+          {whatsAppStatus === 'failed' && (
+            <div className="flex items-center gap-2 text-[#FFCC00] text-sm p-3 bg-[rgba(255,204,0,0.1)] rounded-lg">
+              <AlertCircle className="w-4 h-4" />
+              <span>WhatsApp delivery failed — ticket downloaded automatically</span>
+            </div>
+          )}
         </div>
 
         {/* Actions */}
         <div className="p-4 space-y-3 border-t border-[rgba(255,255,255,0.08)]">
           <button
             onClick={handleSendWhatsApp}
-            disabled={isSending || whatsAppSent}
+            disabled={whatsAppStatus === 'sending' || whatsAppStatus === 'sent'}
             className={`w-full py-3 rounded-full flex items-center justify-center gap-2 font-semibold transition-colors ${
-              whatsAppSent 
+              whatsAppStatus === 'sent' 
                 ? 'bg-[#00E5A0] text-white' 
                 : 'bg-[#25D366] hover:bg-[#128C7E] text-white'
-            }`}
+            } disabled:opacity-70`}
             data-testid="send-whatsapp-btn"
           >
-            {whatsAppSent ? (
+            {whatsAppStatus === 'sending' ? (
+              <>
+                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                <span>Sending...</span>
+              </>
+            ) : whatsAppStatus === 'sent' ? (
               <>
                 <Check className="w-5 h-5" />
                 <span>{t('successWhatsApp')}</span>
