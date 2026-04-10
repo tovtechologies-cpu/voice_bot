@@ -484,14 +484,62 @@ class ConversationState:
     SAVE_TP_PROMPT = "save_tp_prompt"
     # Multi-passenger stub
     ASKING_PASSENGER_COUNT = "asking_passenger_count"
-    # Travel flow states (existing)
+    # Travel flow states
     AWAITING_DESTINATION = "awaiting_destination"
     AWAITING_DATE = "awaiting_date"
     AWAITING_FLIGHT_SELECTION = "awaiting_flight_selection"
     AWAITING_PAYMENT_METHOD = "awaiting_payment_method"
+    AWAITING_PAYMENT_CONFIRM = "awaiting_payment_confirm"
     AWAITING_PAYMENT_CONFIRMATION = "awaiting_payment_confirmation"
     AWAITING_MOBILE_PAYMENT = "awaiting_mobile_payment"
     AWAITING_CARD_PAYMENT = "awaiting_card_payment"
+    # Post-booking states
+    CANCELLATION_IDENTIFY = "cancellation_identify"
+    CANCELLATION_CONFIRM = "cancellation_confirm"
+    CANCELLATION_PROCESSING = "cancellation_processing"
+    REFUND_FAILED = "refund_failed"
+    MODIFICATION_REQUESTED = "modification_requested"
+    MODIFICATION_CONFIRM = "modification_confirm"
+
+
+# ========== FARE CONDITION PROFILES (SANDBOX) ==========
+
+TRAVELIO_FEE = 15.0  # Non-refundable in all cases
+
+MOCK_FARE_PROFILES = [
+    {
+        "name": "Budget",
+        "refundable": "NO",
+        "refund_penalty_eur": None,
+        "change_allowed": False,
+        "change_penalty_eur": None,
+        "refund_deadline": None,
+        "conditions_raw": "Billet non remboursable, non modifiable. Aucun changement autorisé après l'achat.",
+        "conditions_summary": "- ❌ Remboursable : Non — aucun remboursement\n- ❌ Modifiable : Non — billet sec\n- ℹ️ Délai : Sans objet"
+    },
+    {
+        "name": "Standard",
+        "refundable": "PARTIAL",
+        "refund_penalty_eur": 80.0,
+        "change_allowed": True,
+        "change_penalty_eur": 50.0,
+        "refund_deadline_hours_before": 48,
+        "conditions_raw": "Remboursable avec pénalité de 80€. Modifiable avec frais de 50€. Annulation et modification possibles jusqu'à 48h avant le départ.",
+        "conditions_summary": "- ⚠️ Remboursable : Oui avec pénalité de 80€\n- ✅ Modifiable : Oui avec frais de 50€\n- ℹ️ Délai : Annulation/modification 48h avant le départ"
+    },
+    {
+        "name": "Flex",
+        "refundable": "YES",
+        "refund_penalty_eur": 0.0,
+        "change_allowed": True,
+        "change_penalty_eur": 0.0,
+        "refund_deadline_hours_before": 2,
+        "conditions_raw": "Billet entièrement remboursable sans pénalité. Modifiable sans frais. Délai d'annulation jusqu'à 2h avant le départ.",
+        "conditions_summary": "- ✅ Remboursable : Oui — remboursement intégral\n- ✅ Modifiable : Oui — sans frais\n- ℹ️ Délai : Jusqu'à 2h avant le départ"
+    }
+]
+
+logger.info(f"[FARE CONDITIONS] Mode: {'PRODUCTION' if os.environ.get('AMADEUS_API_KEY', '').startswith('your_') is False and os.environ.get('AMADEUS_API_KEY') else 'MOCK'}")
 
 
 # ========== HELPER FUNCTIONS ==========
@@ -673,6 +721,90 @@ def title_case_name(name: str) -> str:
     if name == name.upper() and len(name) > 1:
         return name.title()
     return name
+
+
+def mask_phone(phone: str) -> str:
+    """Mask phone number: ••••XXXX (show only last 4 digits)."""
+    if len(phone) >= 4:
+        return "••••" + phone[-4:]
+    return "••••" + phone
+
+
+def format_timestamp_gmt1(dt: datetime = None) -> str:
+    """Format datetime as DD/MM/YYYY à HH:MM (GMT+1, Benin)."""
+    if dt is None:
+        dt = datetime.now(timezone.utc)
+    gmt1 = dt + timedelta(hours=1)
+    return gmt1.strftime("%d/%m/%Y à %H:%M")
+
+
+def get_fare_conditions(departure_date: str = None) -> Dict:
+    """Get fare conditions — mock in sandbox, real from Amadeus in production."""
+    amadeus_key = os.environ.get('AMADEUS_API_KEY', '')
+    if amadeus_key and not amadeus_key.startswith('your_'):
+        # Production mode — would call Amadeus pricing API
+        # For now return standard profile as placeholder
+        pass
+
+    # Sandbox: rotate randomly among 3 profiles
+    profile = random.choice(MOCK_FARE_PROFILES).copy()
+
+    # Calculate refund deadline from departure date
+    if departure_date and profile.get("refund_deadline_hours_before"):
+        try:
+            dep = datetime.strptime(departure_date, "%Y-%m-%d")
+            deadline = dep - timedelta(hours=profile["refund_deadline_hours_before"])
+            profile["refund_deadline"] = deadline.strftime("%Y-%m-%d %H:%M")
+        except (ValueError, TypeError):
+            profile["refund_deadline"] = None
+    else:
+        profile["refund_deadline"] = profile.get("refund_deadline")
+
+    profile.pop("refund_deadline_hours_before", None)
+    return profile
+
+
+def calculate_refund(booking: Dict) -> Dict:
+    """Calculate refund amount based on fare conditions and Travelio fee policy."""
+    price_eur = booking.get("price_eur", 0)
+    refundable = booking.get("refundable", "NO")
+    penalty = booking.get("refund_penalty_eur") or 0
+    deadline_str = booking.get("refund_deadline")
+
+    # Check deadline
+    deadline_passed = False
+    if deadline_str:
+        try:
+            deadline = datetime.strptime(deadline_str, "%Y-%m-%d %H:%M")
+            if datetime.now() > deadline:
+                deadline_passed = True
+        except (ValueError, TypeError):
+            pass
+
+    if refundable == "NO":
+        return {"case": "non_refundable", "refund_eur": 0, "deadline_passed": False}
+
+    if deadline_passed:
+        return {"case": "deadline_passed", "refund_eur": 0, "deadline_passed": True, "deadline": deadline_str}
+
+    # Travelio 15€ fee is ALWAYS non-refundable
+    # 5% margin is refunded proportionally
+    if refundable == "YES":
+        # Full refund minus Travelio fee
+        refund = price_eur - TRAVELIO_FEE
+        return {"case": "fully_refundable", "refund_eur": round(refund, 2), "deadline_passed": False}
+
+    if refundable == "PARTIAL":
+        # Partial refund: price minus penalty minus Travelio fee
+        refund = price_eur - penalty - TRAVELIO_FEE
+        if refund < 0:
+            refund = 0
+        return {
+            "case": "partial_refund", "refund_eur": round(refund, 2),
+            "airline_penalty": penalty, "deadline_passed": False
+        }
+
+    return {"case": "non_refundable", "refund_eur": 0, "deadline_passed": False}
 
 
 # ========== WHATSAPP API ==========
@@ -1624,6 +1756,14 @@ async def handle_message(phone: str, message_text: str, audio_id: str = None, im
     # ===== IDLE — Entry point: profile check =====
 
     if state == ConversationState.IDLE:
+        # Check for post-booking commands (cancel/refund/modify)
+        if text in ["remboursement", "refund", "rembourser", "annuler réservation", "cancel booking"]:
+            await start_cancellation_flow(phone, lang)
+            return
+        if text in ["modifier", "changer", "change", "modify", "modification"]:
+            await start_modification_flow(phone, lang)
+            return
+
         # Check if greeting
         if text in ["bonjour", "hello", "hi", "salut"]:
             await start_conversation(phone, lang)
@@ -1659,6 +1799,10 @@ async def handle_message(phone: str, message_text: str, audio_id: str = None, im
         await handle_payment_method(phone, text, session, lang)
         return
 
+    if state == ConversationState.AWAITING_PAYMENT_CONFIRM:
+        await handle_pre_debit_confirm(phone, text, session, lang)
+        return
+
     if state == "retry":
         await handle_retry(phone, text, session, lang)
         return
@@ -1672,6 +1816,33 @@ async def handle_message(phone: str, message_text: str, audio_id: str = None, im
         booking_ref = session.get("booking_ref")
         msg = f"⏳ En attente du paiement...\nUtilisez le lien envoyé pour payer.\nRéférence : {booking_ref}" if lang == "fr" else f"⏳ Waiting for payment...\nUse the link sent to complete payment.\nReference: {booking_ref}"
         await send_whatsapp_message(phone, msg)
+        return
+
+    # ===== POST-BOOKING STATES =====
+
+    if state == ConversationState.CANCELLATION_IDENTIFY:
+        await handle_cancellation_identify(phone, text, session, lang)
+        return
+
+    if state == ConversationState.CANCELLATION_CONFIRM:
+        await handle_cancellation_confirm(phone, text, session, lang)
+        return
+
+    if state == ConversationState.CANCELLATION_PROCESSING:
+        msg = "⏳ Remboursement en cours... Veuillez patienter." if lang == "fr" else "⏳ Refund in progress... Please wait."
+        await send_whatsapp_message(phone, msg)
+        return
+
+    if state == ConversationState.REFUND_FAILED:
+        await handle_refund_failed(phone, text, session, lang)
+        return
+
+    if state == ConversationState.MODIFICATION_REQUESTED:
+        await handle_modification_requested(phone, text, session, lang)
+        return
+
+    if state == ConversationState.MODIFICATION_CONFIRM:
+        await handle_modification_confirm(phone, text, session, lang)
         return
 
     # Fallback for unknown state
@@ -2156,7 +2327,7 @@ async def handle_awaiting_date(phone: str, original_text: str, text: str, sessio
 
 
 async def handle_flight_selection(phone: str, text: str, session: Dict, lang: str):
-    """Handle flight selection (1/2/3)."""
+    """Handle flight selection (1/2/3). Creates booking with fare conditions, routes to pre-debit confirmation."""
     flights = session.get("flights", [])
 
     selection = None
@@ -2178,12 +2349,16 @@ async def handle_flight_selection(phone: str, text: str, session: Dict, lang: st
         await send_whatsapp_message(phone, msg)
         return
 
-    # Get passenger data for booking
+    # Get passenger data
     booking_passenger_id = session.get("booking_passenger_id")
     passenger = await get_passenger_by_id(booking_passenger_id) if booking_passenger_id else None
     passenger_name = f"{passenger['lastName']} {passenger['firstName']}" if passenger else phone
 
-    # Create booking
+    # Get fare conditions
+    departure_date = selected.get("departure_time", "").split("T")[0]
+    fare = get_fare_conditions(departure_date)
+
+    # Create booking with fare conditions
     booking_ref = generate_booking_ref()
     booking = {
         "id": str(uuid.uuid4()),
@@ -2196,12 +2371,25 @@ async def handle_flight_selection(phone: str, text: str, session: Dict, lang: st
         "flight_number": selected["flight_number"],
         "origin": selected["origin"],
         "destination": selected["destination"],
-        "departure_date": selected.get("departure_time", "").split("T")[0],
+        "departure_date": departure_date,
         "price_eur": selected["final_price"],
         "price_xof": selected["price_xof"],
         "category": selected["category"],
         "status": "awaiting_payment",
         "payment_method": None,
+        # Fare conditions
+        "fare_conditions_raw": fare.get("conditions_raw", ""),
+        "fare_conditions_summary": fare.get("conditions_summary", ""),
+        "refundable": fare.get("refundable", "NO"),
+        "refund_penalty_eur": fare.get("refund_penalty_eur"),
+        "change_allowed": fare.get("change_allowed", False),
+        "change_penalty_eur": fare.get("change_penalty_eur"),
+        "refund_deadline": fare.get("refund_deadline"),
+        # Refund tracking
+        "refund_status": "NONE",
+        "refund_amount_eur": None,
+        "refund_reference": None,
+        "cancellation_timestamp": None,
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     await db.bookings.insert_one(booking)
@@ -2210,14 +2398,19 @@ async def handle_flight_selection(phone: str, text: str, session: Dict, lang: st
         "state": ConversationState.AWAITING_PAYMENT_METHOD,
         "selected_flight": selected,
         "booking_id": booking["id"],
-        "booking_ref": booking_ref
+        "booking_ref": booking_ref,
+        "_fare_conditions": {
+            "summary": fare.get("conditions_summary", ""),
+            "raw": fare.get("conditions_raw", ""),
+            "refundable": fare.get("refundable", "NO")
+        }
     })
 
     await send_whatsapp_message(phone, format_payment_method_selection(selected["final_price"], lang))
 
 
 async def handle_payment_method(phone: str, text: str, session: Dict, lang: str):
-    """Handle payment method selection (1-4)."""
+    """Handle payment method selection (1-4). Routes to pre-debit confirmation."""
     selected = session.get("selected_flight")
     booking_ref = session.get("booking_ref")
     booking_id = session.get("booking_id")
@@ -2244,6 +2437,103 @@ async def handle_payment_method(phone: str, text: str, session: Dict, lang: str)
         return
 
     await db.bookings.update_one({"id": booking_id}, {"$set": {"payment_method": operator}})
+    await update_session(phone, {
+        "selected_payment_method": operator,
+        "state": ConversationState.AWAITING_PAYMENT_CONFIRM
+    })
+
+    # Build pre-debit confirmation message
+    booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    passenger_name = booking.get("passenger_name", phone) if booking else phone
+    fare_summary = session.get("_fare_conditions", {}).get("summary", "")
+
+    operator_names = {
+        PaymentOperator.MTN_MOMO: "MTN MoMo",
+        PaymentOperator.MOOV_MONEY: "Moov Money",
+        PaymentOperator.GOOGLE_PAY: "Google Pay",
+        PaymentOperator.APPLE_PAY: "Apple Pay"
+    }
+    op_name = operator_names.get(operator, operator)
+    amount_xof = eur_to_xof(selected["final_price"])
+
+    if lang == "fr":
+        msg = f"""💳 *Récapitulatif de votre paiement*
+
+✈️ Vol : {selected['origin']} → {selected['destination']}
+📅 Départ : {selected.get('departure_time', '').split('T')[0]}
+👤 Passager : {passenger_name}
+🎫 Classe : {selected['category']}
+💳 Méthode : {op_name}
+
+📋 *Conditions du billet :*
+{fare_summary}
+
+💰 Montant : *{selected['final_price']}€* ({amount_xof:,} XOF)
+
+⚠️ Lisez attentivement avant de confirmer.
+
+1️⃣ Oui, envoyer la notification de paiement
+2️⃣ Non, annuler
+3️⃣ Voir les conditions complètes"""
+    else:
+        msg = f"""💳 *Payment Summary*
+
+✈️ Flight: {selected['origin']} → {selected['destination']}
+📅 Departure: {selected.get('departure_time', '').split('T')[0]}
+👤 Passenger: {passenger_name}
+🎫 Class: {selected['category']}
+💳 Method: {op_name}
+
+📋 *Ticket conditions:*
+{fare_summary}
+
+💰 Amount: *{selected['final_price']}€* ({amount_xof:,} XOF)
+
+⚠️ Read carefully before confirming.
+
+1️⃣ Yes, send payment notification
+2️⃣ No, cancel
+3️⃣ View full conditions"""
+    await send_whatsapp_message(phone, msg)
+
+
+async def handle_pre_debit_confirm(phone: str, text: str, session: Dict, lang: str):
+    """Handle pre-debit confirmation: 1=confirm, 2=cancel, 3=view full conditions."""
+    if text in ["3", "conditions"]:
+        # Show full fare conditions (chunked if > 1000 chars)
+        fare = session.get("_fare_conditions", {})
+        raw = fare.get("raw", "Aucune condition disponible.")
+        if len(raw) > 1000:
+            chunks = [raw[i:i+1000] for i in range(0, len(raw), 1000)]
+            for chunk in chunks:
+                await send_whatsapp_message(phone, chunk)
+        else:
+            await send_whatsapp_message(phone, f"📋 *Conditions complètes :*\n\n{raw}")
+        msg = "1️⃣ Confirmer le paiement\n2️⃣ Annuler" if lang == "fr" else "1️⃣ Confirm payment\n2️⃣ Cancel"
+        await send_whatsapp_message(phone, msg)
+        return
+
+    if text in ["2", "non", "no", "annuler", "cancel"]:
+        await clear_session(phone)
+        msg = "❌ Réservation annulée. Envoyez un message pour recommencer." if lang == "fr" else "❌ Booking cancelled. Send a message to start again."
+        await send_whatsapp_message(phone, msg)
+        return
+
+    if text in ["1", "oui", "yes", "confirmer", "confirm"]:
+        # PROCEED TO PAYMENT
+        await execute_payment(phone, session, lang)
+        return
+
+    msg = "❓ Répondez 1, 2 ou 3" if lang == "fr" else "❓ Reply 1, 2, or 3"
+    await send_whatsapp_message(phone, msg)
+
+
+async def execute_payment(phone: str, session: Dict, lang: str):
+    """Execute the actual payment after pre-debit confirmation."""
+    selected = session.get("selected_flight")
+    booking_ref = session.get("booking_ref")
+    booking_id = session.get("booking_id")
+    operator = session.get("selected_payment_method")
 
     result = await payment_service.request_payment(
         operator=operator, phone=phone, amount_eur=selected["final_price"],
@@ -2253,14 +2543,35 @@ async def handle_payment_method(phone: str, text: str, session: Dict, lang: str)
     if result.get("status") == "error":
         await send_whatsapp_message(phone, format_payment_failed(operator, lang))
         await send_whatsapp_message(phone, format_retry_options(operator, lang))
-        await update_session(phone, {"state": "retry", "selected_payment_method": operator})
+        await update_session(phone, {"state": "retry"})
         return
 
-    await update_session(phone, {"payment_reference": result.get("reference_id"), "selected_payment_method": operator})
+    await update_session(phone, {"payment_reference": result.get("reference_id")})
 
     if operator in [PaymentOperator.MTN_MOMO, PaymentOperator.MOOV_MONEY]:
         amount_xof = eur_to_xof(selected["final_price"])
-        await send_whatsapp_message(phone, format_mobile_payment_initiated(operator, booking_ref, amount_xof, lang, result.get("is_simulated", False)))
+        # Send push notification message
+        operator_names = {PaymentOperator.MTN_MOMO: "MTN MoMo", PaymentOperator.MOOV_MONEY: "Moov Money"}
+        op_name = operator_names.get(operator, operator)
+        if lang == "fr":
+            msg = f"""📲 *Notification envoyée !*
+
+💰 Montant : *{selected['final_price']}€* ({amount_xof:,} XOF)
+💳 Méthode : {op_name}
+
+👉 Ouvrez {op_name} et confirmez avec votre PIN / mot de passe.
+
+⏳ Vous avez *30 secondes*..."""
+        else:
+            msg = f"""📲 *Notification sent!*
+
+💰 Amount: *{selected['final_price']}€* ({amount_xof:,} XOF)
+💳 Method: {op_name}
+
+👉 Open {op_name} and confirm with your PIN / password.
+
+⏳ You have *30 seconds*..."""
+        await send_whatsapp_message(phone, msg)
         await update_session(phone, {"state": ConversationState.AWAITING_MOBILE_PAYMENT})
         asyncio.create_task(poll_and_complete_payment(phone, booking_id, booking_ref, operator, result["reference_id"], lang))
     else:
@@ -2327,40 +2638,105 @@ async def search_and_show_flights(phone: str, intent: Dict, lang: str):
 
 
 async def poll_and_complete_payment(phone: str, booking_id: str, booking_ref: str, operator: str, reference_id: str, lang: str):
-    """Poll mobile money payment and complete booking on success"""
-    status = await payment_service.poll_status(operator, reference_id, max_attempts=10, phone=phone)
-    
-    if status == "SUCCESSFUL":
-        # Get booking
-        booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
-        if not booking:
+    """Poll mobile money payment with countdown messages and complete booking on success."""
+    operator_names = {PaymentOperator.MTN_MOMO: "MTN MoMo", PaymentOperator.MOOV_MONEY: "Moov Money"}
+    op_name = operator_names.get(operator, operator)
+
+    # Poll with countdown messages
+    for attempt in range(10):
+        await asyncio.sleep(3)
+        status = await payment_service._check_status(operator, reference_id, phone=phone)
+        logger.info(f"Poll {attempt + 1}/10: {operator} {reference_id} = {status}")
+
+        if status in ["SUCCESSFUL", "SUCCESS", "COMPLETED"]:
+            # Payment success — complete booking
+            booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+            if not booking:
+                return
+
+            now_utc = datetime.now(timezone.utc)
+            await db.bookings.update_one({"id": booking_id}, {"$set": {
+                "status": "confirmed",
+                "payment_confirmed_at": now_utc.isoformat()
+            }})
+
+            # Rich payment confirmed message
+            ts = format_timestamp_gmt1(now_utc)
+            masked = mask_phone(phone)
+            if lang == "fr":
+                msg = f"""✅ *Paiement confirmé !*
+
+💰 {booking.get('price_eur')}€ débités — {op_name} ({masked})
+🕐 {ts} GMT+1
+🎫 Réservation : {booking_ref}
+
+🎫 Votre billet est en cours de génération..."""
+            else:
+                msg = f"""✅ *Payment confirmed!*
+
+💰 {booking.get('price_eur')}€ debited — {op_name} ({masked})
+🕐 {ts} GMT+1
+🎫 Booking: {booking_ref}
+
+🎫 Your ticket is being generated..."""
+            await send_whatsapp_message(phone, msg)
+
+            # Generate ticket
+            ticket_filename = generate_ticket_pdf(booking)
+            await asyncio.sleep(2)
+
+            # Send ticket with rich message
+            fn = booking.get("passenger_name", "")
+            if lang == "fr":
+                ticket_msg = f"""✈️ *Votre billet est prêt !*
+{fn}
+{booking.get('origin')} → {booking.get('destination')}
+📅 {booking.get('departure_date')}
+🎫 {booking_ref}
+Bon voyage ! 🌍"""
+            else:
+                ticket_msg = f"""✈️ *Your ticket is ready!*
+{fn}
+{booking.get('origin')} → {booking.get('destination')}
+📅 {booking.get('departure_date')}
+🎫 {booking_ref}
+Have a great trip! 🌍"""
+
+            await send_whatsapp_document(
+                phone,
+                f"{APP_BASE_URL}/api/tickets/{ticket_filename}",
+                ticket_filename,
+                ticket_msg
+            )
+            await clear_session(phone)
             return
-        
-        # Update booking status
-        await db.bookings.update_one({"id": booking_id}, {"$set": {"status": "confirmed"}})
-        
-        # Send success message
-        await send_whatsapp_message(phone, format_payment_success(lang))
-        
-        # Generate ticket
-        ticket_filename = generate_ticket_pdf(booking)
-        
-        # Send ticket
-        await asyncio.sleep(2)
-        await send_whatsapp_document(
-            phone,
-            f"{APP_BASE_URL}/api/tickets/{ticket_filename}",
-            ticket_filename,
-            format_booking_confirmed(booking, lang)
-        )
-        
-        await clear_session(phone)
+
+        if status in ["FAILED", "REJECTED", "CANCELLED"]:
+            break
+
+        # Countdown messages
+        elapsed = (attempt + 1) * 3
+        if elapsed == 9:  # ~10s
+            msg = f"⏳ En attente de confirmation...\nVérifiez votre application {op_name}." if lang == "fr" else f"⏳ Waiting for confirmation...\nCheck your {op_name} app."
+            await send_whatsapp_message(phone, msg)
+        elif elapsed == 18:  # ~20s
+            msg = "⏳ Toujours en attente...\nAssurez-vous d'avoir entré votre PIN." if lang == "fr" else "⏳ Still waiting...\nMake sure you entered your PIN."
+            await send_whatsapp_message(phone, msg)
+
+    # Payment failed or timed out
+    await db.bookings.update_one({"id": booking_id}, {"$set": {"status": "payment_failed"}})
+    if lang == "fr":
+        msg = """⌛ Délai dépassé.
+1️⃣ Renvoyer la notification
+2️⃣ Changer de méthode de paiement
+3️⃣ Annuler la réservation"""
     else:
-        # Payment failed or timed out
-        await db.bookings.update_one({"id": booking_id}, {"$set": {"status": "payment_failed"}})
-        await send_whatsapp_message(phone, format_payment_failed(operator, lang))
-        await send_whatsapp_message(phone, format_retry_options(operator, lang))
-        await update_session(phone, {"state": "retry"})
+        msg = """⌛ Timeout.
+1️⃣ Resend notification
+2️⃣ Change payment method
+3️⃣ Cancel booking"""
+    await send_whatsapp_message(phone, msg)
+    await update_session(phone, {"state": "retry"})
 
 
 async def complete_card_payment(booking_id: str, stripe_intent_id: str):
@@ -2406,6 +2782,509 @@ async def complete_card_payment(booking_id: str, stripe_intent_id: str):
     )
     
     await clear_session(phone)
+
+
+# ========== CANCELLATION & REFUND FLOW ==========
+
+async def start_cancellation_flow(phone: str, lang: str):
+    """Start cancellation flow — show confirmed bookings for this phone."""
+    bookings = await db.bookings.find(
+        {"phone": phone, "status": "confirmed"},
+        {"_id": 0}
+    ).sort("created_at", -1).limit(5).to_list(5)
+
+    if not bookings:
+        msg = "❌ Aucune réservation à annuler." if lang == "fr" else "❌ No bookings to cancel."
+        await send_whatsapp_message(phone, msg)
+        return
+
+    if lang == "fr":
+        msg = "🔍 Quelle réservation souhaitez-vous annuler ?\n\n"
+    else:
+        msg = "🔍 Which booking do you want to cancel?\n\n"
+
+    booking_ids = []
+    for i, b in enumerate(bookings, 1):
+        msg += f"{i}️⃣ {b['booking_ref']} — {get_city_name(b.get('destination', ''))} — {b.get('departure_date')}\n"
+        booking_ids.append(b["booking_ref"])
+
+    msg += f"\n{'ou tapez votre numéro TRV-XXXXXX' if lang == 'fr' else 'or type your TRV-XXXXXX number'}"
+    await update_session(phone, {
+        "state": ConversationState.CANCELLATION_IDENTIFY,
+        "_cancel_booking_list": booking_ids
+    })
+    await send_whatsapp_message(phone, msg)
+
+
+async def handle_cancellation_identify(phone: str, text: str, session: Dict, lang: str):
+    """Identify which booking to cancel."""
+    booking_list = session.get("_cancel_booking_list", [])
+    booking_ref = None
+
+    # Try numeric selection
+    try:
+        idx = int(text) - 1
+        if 0 <= idx < len(booking_list):
+            booking_ref = booking_list[idx]
+    except (ValueError, TypeError):
+        pass
+
+    # Try direct TRV- input
+    if not booking_ref and text.upper().startswith("TRV-"):
+        booking_ref = text.upper()
+
+    if not booking_ref:
+        msg = "❓ Tapez un numéro ou votre référence TRV-XXXXXX" if lang == "fr" else "❓ Type a number or your TRV-XXXXXX reference"
+        await send_whatsapp_message(phone, msg)
+        return
+
+    booking = await db.bookings.find_one({"booking_ref": booking_ref, "phone": phone}, {"_id": 0})
+    if not booking:
+        msg = "❌ Réservation non trouvée." if lang == "fr" else "❌ Booking not found."
+        await send_whatsapp_message(phone, msg)
+        return
+
+    if booking.get("status") != "confirmed":
+        msg = "❌ Cette réservation ne peut pas être annulée (statut: {}).".format(booking.get("status")) if lang == "fr" else "❌ This booking cannot be cancelled (status: {}).".format(booking.get("status"))
+        await send_whatsapp_message(phone, msg)
+        return
+
+    # Apply fare rules
+    refund_info = calculate_refund(booking)
+    await update_session(phone, {
+        "state": ConversationState.CANCELLATION_CONFIRM,
+        "_cancel_booking_ref": booking_ref,
+        "_cancel_refund_info": refund_info
+    })
+
+    masked = mask_phone(phone)
+    payment_display = booking.get("payment_method", "N/A")
+    price = booking.get("price_eur", 0)
+
+    if refund_info["case"] == "non_refundable":
+        summary = booking.get("fare_conditions_summary", "")
+        if lang == "fr":
+            msg = f"""❌ *Billet non remboursable*
+{summary}
+
+Annuler quand même (sans remboursement) ?
+1️⃣ Oui  2️⃣ Non, conserver"""
+        else:
+            msg = f"""❌ *Non-refundable ticket*
+{summary}
+
+Cancel anyway (no refund)?
+1️⃣ Yes  2️⃣ No, keep it"""
+
+    elif refund_info["case"] == "deadline_passed":
+        if lang == "fr":
+            msg = f"""⌛ *Délai d'annulation dépassé*
+
+Remboursement possible jusqu'au {refund_info.get('deadline', 'N/A')}.
+Cette date est dépassée.
+
+1️⃣ Annuler sans remboursement
+2️⃣ Conserver
+3️⃣ Contacter le support"""
+        else:
+            msg = f"""⌛ *Cancellation deadline passed*
+
+Refund was available until {refund_info.get('deadline', 'N/A')}.
+This date has passed.
+
+1️⃣ Cancel without refund
+2️⃣ Keep it
+3️⃣ Contact support"""
+
+    elif refund_info["case"] == "partial_refund":
+        refund = refund_info["refund_eur"]
+        penalty = refund_info.get("airline_penalty", 0)
+        refund_xof = eur_to_xof(refund)
+        if lang == "fr":
+            msg = f"""💰 *Remboursement avec pénalité*
+
+Montant payé : {price}€
+- Pénalité compagnie : -{penalty}€
+- Frais Travelio : -{TRAVELIO_FEE}€ (non remboursables)
+─────────────────
+*Total remboursé : {refund}€* ({refund_xof:,} XOF)
+
+Méthode : {payment_display} ({masked})
+Délai : 5 à 10 jours ouvrés
+
+1️⃣ Oui, annuler et rembourser {refund}€
+2️⃣ Non, conserver"""
+        else:
+            msg = f"""💰 *Refund with penalty*
+
+Amount paid: {price}€
+- Airline penalty: -{penalty}€
+- Travelio fee: -{TRAVELIO_FEE}€ (non-refundable)
+─────────────────
+*Total refunded: {refund}€* ({refund_xof:,} XOF)
+
+Method: {payment_display} ({masked})
+Delay: 5 to 10 business days
+
+1️⃣ Yes, cancel and refund {refund}€
+2️⃣ No, keep it"""
+
+    elif refund_info["case"] == "fully_refundable":
+        refund = refund_info["refund_eur"]
+        refund_xof = eur_to_xof(refund)
+        if lang == "fr":
+            msg = f"""✅ *Remboursement intégral*
+
+Montant payé : {price}€
+- Frais Travelio : -{TRAVELIO_FEE}€ (non remboursables)
+─────────────────
+*Total remboursé : {refund}€* ({refund_xof:,} XOF)
+
+Méthode : {payment_display} ({masked})
+Délai : 3 à 5 jours ouvrés
+
+1️⃣ Oui  2️⃣ Non"""
+        else:
+            msg = f"""✅ *Full refund*
+
+Amount paid: {price}€
+- Travelio fee: -{TRAVELIO_FEE}€ (non-refundable)
+─────────────────
+*Total refunded: {refund}€* ({refund_xof:,} XOF)
+
+Method: {payment_display} ({masked})
+Delay: 3 to 5 business days
+
+1️⃣ Yes  2️⃣ No"""
+    else:
+        msg = "❌ Erreur." if lang == "fr" else "❌ Error."
+
+    await send_whatsapp_message(phone, msg)
+
+
+async def handle_cancellation_confirm(phone: str, text: str, session: Dict, lang: str):
+    """Handle cancellation confirmation: 1=confirm, 2=keep, 3=support."""
+    refund_info = session.get("_cancel_refund_info", {})
+    booking_ref = session.get("_cancel_booking_ref")
+
+    if text in ["2", "non", "no", "conserver", "keep"]:
+        await clear_session(phone)
+        msg = "✅ Réservation conservée." if lang == "fr" else "✅ Booking kept."
+        await send_whatsapp_message(phone, msg)
+        return
+
+    if text == "3":
+        msg = "📧 Contactez notre support : support@travelio.app" if lang == "fr" else "📧 Contact support: support@travelio.app"
+        await send_whatsapp_message(phone, msg)
+        await clear_session(phone)
+        return
+
+    if text not in ["1", "oui", "yes", "confirmer"]:
+        msg = "❓ Répondez 1 ou 2" if lang == "fr" else "❓ Reply 1 or 2"
+        await send_whatsapp_message(phone, msg)
+        return
+
+    # Process cancellation
+    await update_session(phone, {"state": ConversationState.CANCELLATION_PROCESSING})
+
+    booking = await db.bookings.find_one({"booking_ref": booking_ref}, {"_id": 0})
+    if not booking:
+        await clear_session(phone)
+        return
+
+    now_utc = datetime.now(timezone.utc)
+
+    # Invalidate ticket
+    await db.bookings.update_one({"booking_ref": booking_ref}, {"$set": {
+        "status": "cancelled",
+        "cancellation_timestamp": now_utc.isoformat()
+    }})
+    await db.cancelled_bookings.insert_one({
+        "booking_ref": booking_ref,
+        "cancelled_at": now_utc.isoformat()
+    })
+
+    refund_amount = refund_info.get("refund_eur", 0)
+
+    if refund_amount > 0:
+        # Process refund
+        refund_result = await process_refund(booking, refund_amount)
+
+        if refund_result.get("success"):
+            refund_ref = refund_result.get("reference", "")
+            await db.bookings.update_one({"booking_ref": booking_ref}, {"$set": {
+                "refund_status": "PROCESSED",
+                "refund_amount_eur": refund_amount,
+                "refund_reference": refund_ref
+            }})
+            masked = mask_phone(phone)
+            ts = format_timestamp_gmt1(now_utc)
+            payment_display = booking.get("payment_method", "N/A")
+            if lang == "fr":
+                msg = f"""✅ *Annulation confirmée*
+🎫 {booking_ref} annulée
+💰 {refund_amount}€ remboursés → {payment_display} ({masked})
+🕐 {ts} GMT+1
+⏳ Délai : 3 à 10 jours ouvrés
+⚠️ Votre billet a été invalidé."""
+            else:
+                msg = f"""✅ *Cancellation confirmed*
+🎫 {booking_ref} cancelled
+💰 {refund_amount}€ refunded → {payment_display} ({masked})
+⏳ Delay: 3 to 10 business days
+⚠️ Your ticket has been invalidated."""
+            await send_whatsapp_message(phone, msg)
+        else:
+            # Refund failed — add to manual escalation queue
+            failure_reason = refund_result.get("error", "Unknown error")
+            await db.refund_queue.insert_one({
+                "booking_ref": booking_ref,
+                "booking_id": booking.get("id"),
+                "amount_eur": refund_amount,
+                "payment_method": booking.get("payment_method"),
+                "failure_reason": failure_reason,
+                "timestamp": now_utc.isoformat(),
+                "status": "PENDING",
+                "phone": phone
+            })
+            await db.bookings.update_one({"booking_ref": booking_ref}, {"$set": {
+                "refund_status": "FAILED",
+                "refund_amount_eur": refund_amount
+            }})
+            ref_id = f"REF-{booking_ref}-{int(now_utc.timestamp())}"
+            if lang == "fr":
+                msg = f"""❌ Remboursement automatique échoué.
+Traitement manuel sous 48h.
+Référence : {ref_id}"""
+            else:
+                msg = f"""❌ Automatic refund failed.
+Manual processing within 48h.
+Reference: {ref_id}"""
+            await send_whatsapp_message(phone, msg)
+            await update_session(phone, {"state": ConversationState.REFUND_FAILED, "_refund_ref": ref_id})
+            return
+    else:
+        # No refund (non-refundable or deadline passed)
+        if lang == "fr":
+            msg = f"✅ Réservation {booking_ref} annulée.\n⚠️ Aucun remboursement.\nVotre billet a été invalidé."
+        else:
+            msg = f"✅ Booking {booking_ref} cancelled.\n⚠️ No refund.\nYour ticket has been invalidated."
+        await send_whatsapp_message(phone, msg)
+
+    await clear_session(phone)
+
+
+async def handle_refund_failed(phone: str, text: str, session: Dict, lang: str):
+    """Handle refund failed state — manual escalation."""
+    ref_id = session.get("_refund_ref", "N/A")
+    msg = f"📧 Votre remboursement est en cours de traitement manuel.\nRéférence : {ref_id}\nContactez support@travelio.app si besoin." if lang == "fr" else f"📧 Your refund is being processed manually.\nReference: {ref_id}\nContact support@travelio.app if needed."
+    await send_whatsapp_message(phone, msg)
+    await clear_session(phone)
+
+
+async def process_refund(booking: Dict, amount_eur: float) -> Dict:
+    """Process refund via the original payment method. Returns {success, reference, error}."""
+    payment_method = booking.get("payment_method")
+    booking_ref = booking.get("booking_ref")
+
+    # Test-only: force failure if booking has _test_refund_fail flag
+    if booking.get("_test_refund_fail"):
+        logger.info(f"[REFUND] Simulated FAILURE for {booking_ref}")
+        return {"success": False, "error": "Simulated refund failure for testing"}
+
+    try:
+        # Simulated refund in sandbox mode
+        if payment_method in [PaymentOperator.MTN_MOMO, PaymentOperator.MOOV_MONEY]:
+            ref = f"REFUND-{payment_method[:4].upper()}-{uuid.uuid4().hex[:8].upper()}"
+            logger.info(f"[REFUND] {payment_method} refund of {amount_eur}€ for {booking_ref}: {ref}")
+            return {"success": True, "reference": ref}
+
+        if payment_method in [PaymentOperator.GOOGLE_PAY, PaymentOperator.APPLE_PAY]:
+            stripe_key = os.environ.get("STRIPE_SECRET_KEY", "")
+            if stripe_key and not stripe_key.startswith("your_"):
+                pass
+            ref = f"REFUND-STRIPE-{uuid.uuid4().hex[:8].upper()}"
+            logger.info(f"[REFUND] Stripe refund of {amount_eur}€ for {booking_ref}: {ref}")
+            return {"success": True, "reference": ref}
+
+        return {"success": False, "error": f"Unknown payment method: {payment_method}"}
+    except Exception as e:
+        logger.error(f"Refund error for {booking_ref}: {e}")
+        return {"success": False, "error": str(e)}
+
+
+# ========== MODIFICATION FLOW ==========
+
+async def start_modification_flow(phone: str, lang: str):
+    """Start modification flow — show modifiable bookings."""
+    bookings = await db.bookings.find(
+        {"phone": phone, "status": "confirmed"},
+        {"_id": 0}
+    ).sort("created_at", -1).limit(5).to_list(5)
+
+    if not bookings:
+        msg = "❌ Aucune réservation à modifier." if lang == "fr" else "❌ No bookings to modify."
+        await send_whatsapp_message(phone, msg)
+        return
+
+    booking_ids = []
+    if lang == "fr":
+        msg = "✏️ Quelle réservation souhaitez-vous modifier ?\n\n"
+    else:
+        msg = "✏️ Which booking do you want to modify?\n\n"
+
+    for i, b in enumerate(bookings, 1):
+        msg += f"{i}️⃣ {b['booking_ref']} — {get_city_name(b.get('destination', ''))} — {b.get('departure_date')}\n"
+        booking_ids.append(b["booking_ref"])
+
+    await update_session(phone, {
+        "state": ConversationState.MODIFICATION_REQUESTED,
+        "_mod_booking_list": booking_ids
+    })
+    await send_whatsapp_message(phone, msg)
+
+
+async def handle_modification_requested(phone: str, text: str, session: Dict, lang: str):
+    """Identify booking to modify and check if changes are allowed."""
+    booking_list = session.get("_mod_booking_list", [])
+    booking_ref = None
+
+    try:
+        idx = int(text) - 1
+        if 0 <= idx < len(booking_list):
+            booking_ref = booking_list[idx]
+    except (ValueError, TypeError):
+        pass
+
+    if not booking_ref and text.upper().startswith("TRV-"):
+        booking_ref = text.upper()
+
+    if not booking_ref:
+        msg = "❓ Tapez un numéro ou votre référence TRV-XXXXXX" if lang == "fr" else "❓ Type a number or your TRV-XXXXXX reference"
+        await send_whatsapp_message(phone, msg)
+        return
+
+    booking = await db.bookings.find_one({"booking_ref": booking_ref, "phone": phone}, {"_id": 0})
+    if not booking:
+        msg = "❌ Réservation non trouvée." if lang == "fr" else "❌ Booking not found."
+        await send_whatsapp_message(phone, msg)
+        return
+
+    if not booking.get("change_allowed", False):
+        if lang == "fr":
+            msg = """❌ Billet non modifiable.
+1️⃣ Voir conditions d'annulation
+2️⃣ Conserver"""
+        else:
+            msg = """❌ Ticket not modifiable.
+1️⃣ View cancellation conditions
+2️⃣ Keep it"""
+        await update_session(phone, {
+            "state": ConversationState.MODIFICATION_CONFIRM,
+            "_mod_booking_ref": booking_ref,
+            "_mod_allowed": False
+        })
+        await send_whatsapp_message(phone, msg)
+        return
+
+    change_penalty = booking.get("change_penalty_eur", 0) or 0
+    if lang == "fr":
+        msg = f"""✅ Billet modifiable.
+Pénalité : {change_penalty}€
+
+Que modifier ?
+1️⃣ Date de départ
+2️⃣ Date de retour
+3️⃣ Annuler plutôt"""
+    else:
+        msg = f"""✅ Ticket modifiable.
+Penalty: {change_penalty}€
+
+What to change?
+1️⃣ Departure date
+2️⃣ Return date
+3️⃣ Cancel instead"""
+    await update_session(phone, {
+        "state": ConversationState.MODIFICATION_CONFIRM,
+        "_mod_booking_ref": booking_ref,
+        "_mod_allowed": True,
+        "_mod_penalty": change_penalty
+    })
+    await send_whatsapp_message(phone, msg)
+
+
+async def handle_modification_confirm(phone: str, text: str, session: Dict, lang: str):
+    """Handle modification confirmation choices."""
+    allowed = session.get("_mod_allowed", False)
+    booking_ref = session.get("_mod_booking_ref")
+
+    if not allowed:
+        # Non-modifiable ticket
+        if text == "1":
+            # Switch to cancellation flow
+            await update_session(phone, {"state": ConversationState.IDLE})
+            await start_cancellation_flow(phone, lang)
+            return
+        await clear_session(phone)
+        msg = "✅ Réservation conservée." if lang == "fr" else "✅ Booking kept."
+        await send_whatsapp_message(phone, msg)
+        return
+
+    if text == "3":
+        # Switch to cancellation
+        await update_session(phone, {"state": ConversationState.IDLE})
+        await start_cancellation_flow(phone, lang)
+        return
+
+    if text in ["1", "2"]:
+        # Request new date
+        change_type = "departure" if text == "1" else "return"
+        if lang == "fr":
+            msg = f"📅 Quelle nouvelle date de {'départ' if text == '1' else 'retour'} ?"
+        else:
+            msg = f"📅 What new {'departure' if text == '1' else 'return'} date?"
+        await update_session(phone, {
+            "state": ConversationState.AWAITING_DATE,
+            "_mod_change_type": change_type,
+            "_mod_booking_ref": booking_ref,
+            "intent": {}
+        })
+
+        # For now, search new flights — the modification flow reuses the booking flow
+        booking = await db.bookings.find_one({"booking_ref": booking_ref}, {"_id": 0})
+        if booking:
+            penalty = session.get("_mod_penalty", 0)
+            await update_session(phone, {
+                "intent": {
+                    "origin": booking.get("origin"),
+                    "destination": booking.get("destination"),
+                },
+                "_mod_old_price": booking.get("price_eur"),
+                "_mod_penalty": penalty
+            })
+        await send_whatsapp_message(phone, msg)
+        return
+
+    msg = "❓ Répondez 1, 2 ou 3" if lang == "fr" else "❓ Reply 1, 2, or 3"
+    await send_whatsapp_message(phone, msg)
+
+
+# ========== QR VERIFICATION ENDPOINT ==========
+
+@api_router.get("/verify/{booking_ref}")
+async def verify_ticket(booking_ref: str):
+    """Verify if a booking/ticket is valid or has been cancelled."""
+    cancelled = await db.cancelled_bookings.find_one({"booking_ref": booking_ref})
+    if cancelled:
+        return {"status": "INVALID", "booking_ref": booking_ref, "reason": "Ticket cancelled"}
+    booking = await db.bookings.find_one({"booking_ref": booking_ref}, {"_id": 0})
+    if not booking:
+        return {"status": "UNKNOWN", "booking_ref": booking_ref}
+    if booking.get("status") == "cancelled":
+        return {"status": "INVALID", "booking_ref": booking_ref, "reason": "Ticket cancelled"}
+    if booking.get("status") == "confirmed":
+        return {"status": "VALID", "booking_ref": booking_ref, "passenger": booking.get("passenger_name")}
+    return {"status": "PENDING", "booking_ref": booking_ref}
 
 
 # ========== API ROUTES ==========
