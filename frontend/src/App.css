@@ -1,34 +1,80 @@
-.App-logo {
-    height: 40vmin;
-    pointer-events: none;
+/* Travelio App Styles */
+
+.App {
+  min-height: 100vh;
+  background-color: #0A0F1E;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-    .App-logo {
-        animation: App-logo-spin infinite 20s linear;
-    }
+/* Additional animation for confetti */
+@keyframes confetti {
+  0% {
+    transform: translateY(0) rotateX(0) rotateY(0);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(100vh) rotateX(360deg) rotateY(180deg);
+    opacity: 0;
+  }
 }
 
-.App-header {
-    background-color: #0f0f10;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    font-size: calc(10px + 2vmin);
-    color: white;
+/* Smooth page transitions */
+.page-transition-enter {
+  opacity: 0;
+  transform: translateY(20px);
 }
 
-.App-link {
-    color: #61dafb;
+.page-transition-enter-active {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 200ms ease, transform 200ms ease;
 }
 
-@keyframes App-logo-spin {
-    from {
-        transform: rotate(0deg);
-    }
-    to {
-        transform: rotate(360deg);
-    }
+.page-transition-exit {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.page-transition-exit-active {
+  opacity: 0;
+  transform: translateY(-20px);
+  transition: opacity 200ms ease, transform 200ms ease;
+}
+
+/* Focus styles for accessibility */
+button:focus-visible,
+input:focus-visible,
+a:focus-visible {
+  outline: 2px solid #6C63FF;
+  outline-offset: 2px;
+}
+
+/* Disabled states */
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Active states for touch devices */
+@media (hover: none) {
+  .btn-gradient:active {
+    transform: scale(0.98);
+  }
+  
+  .flight-card:active {
+    transform: scale(0.99);
+  }
+}
+
+/* Loading pulse animation */
+@keyframes loadingPulse {
+  0%, 100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.loading-pulse {
+  animation: loadingPulse 1.5s ease-in-out infinite;
 }
