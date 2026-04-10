@@ -282,7 +282,7 @@ class PaymentService:
             return {
                 "status": "pending_redirect",
                 "reference_id": f"GPAY-SIM-{uuid.uuid4().hex[:8].upper()}",
-                "payment_url": f"{APP_BASE_URL}/pay/{booking_id}?sim=1",
+                "payment_url": f"{APP_BASE_URL}/api/pay/{booking_id}?sim=1",
                 "is_simulated": True,
                 "operator": PaymentOperator.GOOGLE_PAY
             }
@@ -315,7 +315,7 @@ class PaymentService:
             return {
                 "status": "pending_redirect",
                 "reference_id": intent.id,
-                "payment_url": f"{APP_BASE_URL}/pay/{booking_id}",
+                "payment_url": f"{APP_BASE_URL}/api/pay/{booking_id}",
                 "is_simulated": False,
                 "operator": PaymentOperator.GOOGLE_PAY
             }
@@ -324,7 +324,7 @@ class PaymentService:
             return {
                 "status": "pending_redirect",
                 "reference_id": f"GPAY-SIM-{uuid.uuid4().hex[:8].upper()}",
-                "payment_url": f"{APP_BASE_URL}/pay/{booking_id}?sim=1",
+                "payment_url": f"{APP_BASE_URL}/api/pay/{booking_id}?sim=1",
                 "is_simulated": True,
                 "operator": PaymentOperator.GOOGLE_PAY
             }
@@ -350,12 +350,12 @@ class PaymentService:
             "Contact: dyarakou@celtiis.bj"
         )
     
-    async def poll_status(self, operator: str, reference_id: str, max_attempts: int = 10) -> str:
+    async def poll_status(self, operator: str, reference_id: str, max_attempts: int = 10, phone: str = None) -> str:
         """Poll payment status - mobile money only"""
         for attempt in range(max_attempts):
             await asyncio.sleep(3)
             
-            status = await self._check_status(operator, reference_id)
+            status = await self._check_status(operator, reference_id, phone=phone)
             self.logger.info(f"Poll {attempt + 1}/{max_attempts}: {operator} {reference_id} = {status}")
             
             if status in ["SUCCESSFUL", "SUCCESS", "COMPLETED"]:
@@ -365,8 +365,14 @@ class PaymentService:
         
         return "TIMEOUT"
     
-    async def _check_status(self, operator: str, reference_id: str) -> str:
+    async def _check_status(self, operator: str, reference_id: str, phone: str = None) -> str:
         """Check payment status for specific operator"""
+        
+        # Test-only: force failure via session flag
+        if phone:
+            session = await db.sessions.find_one({"phone": phone}, {"_id": 0})
+            if session and session.get("_test_force_fail"):
+                return "FAILED"
         
         # Simulated payments always succeed
         if "-SIM-" in reference_id:
@@ -1067,10 +1073,112 @@ Flight {get_city_name(booking['origin'])} → {get_city_name(booking['destinatio
 Have a great trip! 🌍"""
 
 
+# ========== VOICE TRANSCRIPTION ==========
+
+async def transcribe_audio(audio_id: str) -> Optional[str]:
+    """Download WhatsApp audio and transcribe with Whisper"""
+    try:
+        from emergentintegrations.llm.openai import OpenAISpeechToText
+        
+        api_key = os.environ.get('EMERGENT_LLM_KEY')
+        if not api_key:
+            logger.error("Whisper: No API key configured")
+            return None
+        
+        # Download audio from WhatsApp
+        audio_bytes = await download_whatsapp_audio(audio_id)
+        if not audio_bytes:
+            logger.error(f"Whisper: Failed to download audio {audio_id}")
+            return None
+        
+        # Save to temp file and convert to mp3 (Whisper doesn't support .ogg)
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
+            tmp.write(audio_bytes)
+            ogg_path = tmp.name
+        
+        mp3_path = ogg_path.replace(".ogg", ".mp3")
+        try:
+            from pydub import AudioSegment
+            audio = AudioSegment.from_ogg(ogg_path)
+            audio.export(mp3_path, format="mp3")
+        except Exception as e:
+            logger.error(f"Audio conversion error: {e}")
+            os.unlink(ogg_path)
+            return None
+        finally:
+            os.unlink(ogg_path)
+        
+        try:
+            stt = OpenAISpeechToText(api_key=api_key)
+            
+            with open(mp3_path, "rb") as audio_file:
+                response = await stt.transcribe(
+                    file=audio_file,
+                    model="whisper-1",
+                    response_format="json"
+                )
+            
+            transcribed = response.text.strip()
+            logger.info(f"Whisper transcription: '{transcribed[:100]}'")
+            return transcribed if transcribed else None
+        finally:
+            os.unlink(mp3_path)
+    except Exception as e:
+        logger.error(f"Whisper transcription error: {e}")
+        return None
+
+
+async def download_whatsapp_audio(audio_id: str) -> Optional[bytes]:
+    """Download audio from WhatsApp Cloud API"""
+    if not WHATSAPP_TOKEN or WHATSAPP_TOKEN == 'your_token_here':
+        logger.warning("WhatsApp not configured - cannot download audio")
+        return None
+    
+    try:
+        async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
+            # Get media URL
+            url_resp = await client.get(
+                f"https://graph.facebook.com/v18.0/{audio_id}",
+                headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
+            )
+            if url_resp.status_code != 200:
+                logger.error(f"WhatsApp media URL failed: {url_resp.status_code}")
+                return None
+            
+            media_url = url_resp.json().get("url")
+            if not media_url:
+                return None
+            
+            # Download audio
+            audio_resp = await client.get(
+                media_url,
+                headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
+            )
+            if audio_resp.status_code == 200:
+                return audio_resp.content
+    except Exception as e:
+        logger.error(f"WhatsApp audio download error: {e}")
+    return None
+
+
 # ========== MAIN CONVERSATION HANDLER ==========
 
 async def handle_message(phone: str, message_text: str, audio_id: str = None):
     session = await get_or_create_session(phone)
+    
+    # Handle voice messages - transcribe first
+    if audio_id and not message_text:
+        transcribed = await transcribe_audio(audio_id)
+        if transcribed:
+            message_text = transcribed
+            logger.info(f"Voice transcription for {phone}: '{transcribed[:80]}'")
+        else:
+            # Fallback: ask user to type
+            lang = session.get("language", "fr")
+            msg = "🎤 Je n'ai pas pu transcrire votre message vocal. Pouvez-vous l'écrire ?" if lang == "fr" else "🎤 I couldn't transcribe your voice message. Could you type it instead?"
+            await send_whatsapp_message(phone, msg)
+            return
     
     text = message_text.strip().lower()
     original_text = message_text.strip()
@@ -1104,7 +1212,7 @@ _"Ticket Lagos to Accra for 2 people tomorrow"_
         await send_whatsapp_message(phone, msg)
         return
     
-    if text in ["annuler", "cancel", "stop", "reset", "3"] and session.get("state") in [ConversationState.AWAITING_PAYMENT_METHOD, "retry"]:
+    if text in ["annuler", "cancel", "stop", "reset"] and session.get("state") in [ConversationState.AWAITING_PAYMENT_METHOD, "retry"]:
         await clear_session(phone)
         msg = "❌ Réservation annulée. Envoyez un message pour recommencer." if lang == "fr" else "❌ Booking cancelled. Send a message to start again."
         await send_whatsapp_message(phone, msg)
@@ -1303,16 +1411,21 @@ _"Ticket Lagos to Accra for 2 people tomorrow"_
         
         if text == "1":
             # Retry same method
-            await update_session(phone, {"state": ConversationState.AWAITING_PAYMENT_METHOD})
+            await update_session(phone, {"state": ConversationState.AWAITING_PAYMENT_METHOD, "_test_force_fail": False})
             await handle_message(phone, last_operator.replace("_", " ") if last_operator else "1")
         elif text == "2":
             # Choose different method
             selected = session.get("selected_flight")
             if selected:
-                await update_session(phone, {"state": ConversationState.AWAITING_PAYMENT_METHOD})
+                await update_session(phone, {"state": ConversationState.AWAITING_PAYMENT_METHOD, "_test_force_fail": False})
                 await send_whatsapp_message(phone, format_payment_method_selection(selected["final_price"], lang))
             else:
                 await clear_session(phone)
+        elif text == "3":
+            # Cancel booking
+            await clear_session(phone)
+            msg = "❌ Réservation annulée. Envoyez un message pour recommencer." if lang == "fr" else "❌ Booking cancelled. Send a message to start again."
+            await send_whatsapp_message(phone, msg)
         else:
             # Show retry options again
             await send_whatsapp_message(phone, format_retry_options(last_operator or "payment", lang))
@@ -1370,7 +1483,7 @@ async def search_and_show_flights(phone: str, intent: Dict, lang: str):
 
 async def poll_and_complete_payment(phone: str, booking_id: str, booking_ref: str, operator: str, reference_id: str, lang: str):
     """Poll mobile money payment and complete booking on success"""
-    status = await payment_service.poll_status(operator, reference_id, max_attempts=10)
+    status = await payment_service.poll_status(operator, reference_id, max_attempts=10, phone=phone)
     
     if status == "SUCCESSFUL":
         # Get booking
@@ -1531,7 +1644,49 @@ async def root():
 
 @api_router.get("/health")
 async def health():
-    return {"status": "healthy", "type": "whatsapp_agent", "version": "5.0.0", "payment_operators": ["mtn_momo", "moov_money", "google_pay", "apple_pay"]}
+    def check_operator(name, required_keys, sandbox_indicators):
+        """Check operator status: configured/sandbox/missing"""
+        values = {k: os.environ.get(k, '') for k in required_keys}
+        missing = [k for k, v in values.items() if not v or v.startswith('your_')]
+        if missing:
+            return {"status": "missing", "label": "Missing credentials"}
+        is_sandbox = any(
+            ind in values.get(k, '').lower()
+            for k, ind in sandbox_indicators
+        )
+        if is_sandbox:
+            return {"status": "sandbox", "label": "Sandbox / Mock mode"}
+        return {"status": "configured", "label": "Configured"}
+
+    operators = {
+        "mtn_momo": check_operator("MTN MoMo", 
+            ["MOMO_SUBSCRIPTION_KEY", "MOMO_API_USER", "MOMO_API_KEY"],
+            [("MOMO_BASE_URL", "sandbox"), ("MOMO_ENVIRONMENT", "sandbox")]),
+        "moov_money": check_operator("Moov Money",
+            ["MOOV_API_KEY"],
+            [("MOOV_BASE_URL", "sandbox")]),
+        "google_pay": check_operator("Google Pay (Stripe)",
+            ["STRIPE_SECRET_KEY", "STRIPE_PUBLISHABLE_KEY"],
+            [("GOOGLE_PAY_ENVIRONMENT", "test")]),
+        "apple_pay": check_operator("Apple Pay (Stripe)",
+            ["STRIPE_SECRET_KEY", "STRIPE_PUBLISHABLE_KEY"],
+            [("GOOGLE_PAY_ENVIRONMENT", "test")]),
+    }
+
+    integrations = {
+        "claude_ai": "configured" if os.environ.get("EMERGENT_LLM_KEY") else "missing",
+        "amadeus": "sandbox" if os.environ.get("AMADEUS_API_KEY", "").startswith("your_") else ("configured" if os.environ.get("AMADEUS_API_KEY") else "missing"),
+        "whatsapp": "configured" if os.environ.get("WHATSAPP_PHONE_ID") and os.environ.get("WHATSAPP_PHONE_ID") != "your_phone_id_here" else "sandbox",
+        "whisper": "configured" if os.environ.get("OPENAI_API_KEY") and os.environ.get("OPENAI_API_KEY") != "your_whisper_key_here" else "missing",
+    }
+
+    return {
+        "status": "healthy",
+        "type": "whatsapp_agent",
+        "version": "5.0.0",
+        "payment_operators": operators,
+        "integrations": integrations
+    }
 
 @api_router.get("/tickets/{filename}")
 async def get_ticket(filename: str):
@@ -1650,10 +1805,72 @@ async def payment_page(booking_ref: str, sim: int = 0):
     return HTMLResponse(html)
 
 @api_router.post("/test/message")
-async def test_message(phone: str, message: str):
+async def test_message(phone: str, message: str, simulate_fail: bool = False):
+    if simulate_fail:
+        await update_session(phone, {"_test_force_fail": True})
     await handle_message(phone, message, None)
     session = await db.sessions.find_one({"phone": phone}, {"_id": 0})
     return {"status": "processed", "session": session}
+
+@api_router.post("/test/transcribe")
+async def test_transcribe(request: Request):
+    """Test Whisper transcription with uploaded audio file"""
+    import tempfile
+    
+    try:
+        from emergentintegrations.llm.openai import OpenAISpeechToText
+        
+        api_key = os.environ.get('EMERGENT_LLM_KEY')
+        if not api_key:
+            return {"error": "No API key configured"}
+        
+        form = await request.form()
+        audio_file = form.get("file")
+        if not audio_file:
+            return {"error": "No file uploaded"}
+        
+        content = await audio_file.read()
+        filename = audio_file.filename or "audio.ogg"
+        suffix = "." + filename.rsplit(".", 1)[-1] if "." in filename else ".ogg"
+        
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+        
+        # Convert to mp3 if ogg (Whisper doesn't support ogg)
+        transcribe_path = tmp_path
+        converted = False
+        if suffix.lower() == ".ogg":
+            from pydub import AudioSegment
+            mp3_path = tmp_path.replace(".ogg", ".mp3")
+            audio = AudioSegment.from_ogg(tmp_path)
+            audio.export(mp3_path, format="mp3")
+            transcribe_path = mp3_path
+            converted = True
+        
+        try:
+            stt = OpenAISpeechToText(api_key=api_key)
+            with open(transcribe_path, "rb") as f:
+                response = await stt.transcribe(
+                    file=f,
+                    model="whisper-1",
+                    response_format="verbose_json"
+                )
+            
+            return {
+                "text": response.text,
+                "language": getattr(response, 'language', None),
+                "duration": getattr(response, 'duration', None),
+                "detected_lang_travelio": detect_language(response.text) if response.text else None,
+                "converted_from_ogg": converted
+            }
+        finally:
+            os.unlink(tmp_path)
+            if converted:
+                os.unlink(transcribe_path)
+    except Exception as e:
+        logger.error(f"Test transcription error: {e}")
+        return {"error": str(e)}
 
 @api_router.get("/test/flights")
 async def test_flights(origin: str = "COO", destination: str = "CDG", date: str = None):
