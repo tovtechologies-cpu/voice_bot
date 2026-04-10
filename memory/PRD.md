@@ -1,91 +1,91 @@
-# Travelio PRD - WhatsApp Travel Booking Agent v5.1
+# Travelio PRD - WhatsApp Travel Booking Agent v6.0
 
 ## Problem Statement
 Travelio is a WhatsApp-only conversational agent for booking flights.
 No web frontend — only a status page. Entire journey happens inside WhatsApp.
 
 ## Architecture
-- **Backend**: FastAPI webhook receiver (server.py)
-- **AI**: Claude Sonnet 4.5 (intent parsing via Emergent LLM Key)
+- **Backend**: FastAPI webhook (server.py)
+- **AI**: Claude Sonnet 4.5 (intent parsing), OpenAI Whisper (voice)
 - **Flights**: Amadeus Flight Offers Search API
-- **Payment**: MTN MoMo, Moov Money, Google Pay, Apple Pay (via Stripe)
-- **Voice**: OpenAI Whisper (via Emergent LLM Key) with .ogg→.mp3 conversion
+- **Payment**: MTN MoMo, Moov Money, Google Pay, Apple Pay (Stripe)
 - **OCR**: pytesseract (default) / Google Vision API (optional)
-- **Delivery**: PDF ticket + QR code via WhatsApp
 - **Frontend**: React status dashboard only
 
-## Conversation Flow (Updated)
+## Travelio Fee Policy
+- 15€ flat fee: NON-REFUNDABLE in all cases
+- 5% margin: included in final price
 
-### New User
-1. First message → Welcome + enrollment method selection
-2. Enrollment (scan/photo/manual) → 3 steps for manual
-3. Profile confirmation + save to DB
-4. "Pour vous ou pour un tiers?"
-5. Multi-passenger count (stub: 1 only)
-6. Travel intent (destination, date)
-7. Flight search → 3 options (cheapest, fastest, premium)
-8. Flight selection
-9. Payment method selection (4 operators)
-10. Payment processing
-11. Ticket generated with passenger data + sent via WhatsApp
+## Fare Condition Profiles (Sandbox)
+| Profile | Refundable | Penalty | Changeable | Change Fee | Deadline |
+|---------|-----------|---------|------------|------------|----------|
+| Budget | NO | N/A | NO | N/A | N/A |
+| Standard | PARTIAL | 80€ | YES | 50€ | 48h before |
+| Flex | YES | 0€ | YES | 0€ | 2h before |
 
-### Returning User
-1. Message → profile found → "Pour moi / Pour un tiers"
-2. Skip enrollment, go directly to step 5+
+## Conversation States (Complete)
+### Enrollment
+- IDLE, ENROLLMENT_METHOD, ENROLLING_SCAN, ENROLLING_MANUAL_FN/LN/PP
+- CONFIRMING_PROFILE, ASKING_TRAVEL_PURPOSE, SELECTING_THIRD_PARTY
+- ENROLLING_THIRD_PARTY_METHOD, ENROLLING_TP_SCAN/MANUAL_FN/LN/PP
+- CONFIRMING_TP_PROFILE, SAVE_TP_PROMPT, ASKING_PASSENGER_COUNT
 
-## Enrollment Methods
-1. **Passport scan/photo**: Image → OCR (pytesseract/Vision) → MRZ parsing
-2. **Manual entry**: First name → Last name → Passport # (optional)
+### Booking
+- AWAITING_DESTINATION, AWAITING_DATE, AWAITING_FLIGHT_SELECTION
+- AWAITING_PAYMENT_METHOD, AWAITING_PAYMENT_CONFIRM (pre-debit)
+- AWAITING_MOBILE_PAYMENT, AWAITING_CARD_PAYMENT
 
-## Passenger Schema (MongoDB: passengers)
-- id, whatsapp_phone (unique), firstName, lastName
-- passportNumber (nullable), nationality, dateOfBirth, expiryDate
-- created_by_phone, createdAt, updatedAt
+### Post-booking
+- CANCELLATION_IDENTIFY, CANCELLATION_CONFIRM, CANCELLATION_PROCESSING
+- REFUND_FAILED, MODIFICATION_REQUESTED, MODIFICATION_CONFIRM
 
-## Third-Party Booking
-- Returning users can book for saved third parties (max 5 per phone)
-- New third parties go through full enrollment
-- Save/discard option after enrollment
-
-## Pricing Rule
-final_price = amadeus_price + 15€ + 5%
-Display in EUR and XOF (1€ = 655.957 XOF)
-
-## What's Implemented
-- [x] WhatsApp webhook (GET verify + POST messages + images)
-- [x] Claude Sonnet 4.5 intent parsing
-- [x] Amadeus Flight Offers API
-- [x] Flight categorization (PLUS_BAS, PLUS_RAPIDE, PREMIUM)
+## What's Implemented (v6.0 — April 2026)
+- [x] WhatsApp webhook (text, audio, image)
+- [x] Claude AI intent parsing + Whisper voice transcription
+- [x] Amadeus flight search + categorization (3 categories)
 - [x] Travelio pricing margin + EUR/XOF display
-- [x] MTN MoMo, Moov Money, Google Pay, Apple Pay payments
-- [x] PaymentService abstraction + retry/cancel flow
-- [x] PDF ticket with QR code + passenger data
-- [x] Whisper voice transcription (.ogg auto-conversion)
-- [x] French/English bilingual support
-- [x] **Passenger enrollment (manual + OCR)**
-- [x] **Profile detection (new vs returning user)**
-- [x] **Third-party booking with saved passengers**
-- [x] **Multi-passenger stub**
-- [x] **Session timeout (30 min)**
-- [x] **Input validation (name regex, passport format)**
+- [x] Passenger enrollment (manual + OCR)
+- [x] Profile detection (new vs returning user)
+- [x] Third-party booking with saved passengers (max 5)
+- [x] Multi-passenger stub
+- [x] Session timeout (30 min)
+- [x] Pre-debit confirmation with fare conditions display
+- [x] Payment method selection (4 operators)
+- [x] Payment countdown messages (10s, 20s, 30s timeout)
+- [x] Rich payment confirmed message (masked phone, GMT+1 timestamp)
+- [x] Fare conditions (3 mock profiles, Claude summarization ready)
+- [x] Cancellation flow (4 cases: non-refundable, partial, full, deadline)
+- [x] Refund processing (simulated MoMo/Moov/Stripe)
+- [x] Refund failure → manual escalation queue
+- [x] Ticket invalidation (cancelled_bookings + QR verification)
+- [x] Modification flow (allowed/not-allowed detection)
+- [x] QR verification endpoint (VALID/INVALID/UNKNOWN)
 - [x] Frontend status dashboard with per-operator health
 
 ## API Endpoints
-- `GET/POST /api/webhook` - WhatsApp
-- `POST /api/momo/callback` - MoMo callback
-- `POST /api/moov/callback` - Moov callback
-- `POST /api/stripe/webhook` - Stripe callback
+- `GET/POST /api/webhook` - WhatsApp messages
+- `GET /api/verify/{booking_ref}` - QR ticket verification
 - `GET /api/pay/{booking_ref}` - Stripe payment page
 - `GET /api/health` - Health + operator status
 - `GET /api/tickets/{filename}` - PDF download
+- `POST /api/momo/callback` - MoMo callback
+- `POST /api/moov/callback` - Moov callback
+- `POST /api/stripe/webhook` - Stripe callback
 - `POST /api/test/message` - Test simulation
 - `POST /api/test/transcribe` - Test audio
 
+## Database Collections
+- `sessions` - Conversation state per phone
+- `passengers` - Passenger profiles
+- `bookings` - Flight bookings with fare conditions
+- `cancelled_bookings` - Invalidated ticket references
+- `refund_queue` - Failed refunds for manual processing
+
 ## Backlog
 1. Configure WhatsApp Business API (External)
-2. Stripe Domain Verification for Apple Pay (External)
-3. Celtiis Cash payment (pending)
-4. Return flight booking
-5. Passenger name collection improvements
-6. Production Amadeus/MoMo/Moov credentials
-7. Actual multi-passenger support
+2. Stripe Domain Verification for Apple Pay
+3. Production Amadeus/MoMo/Moov/Stripe credentials
+4. Celtiis Cash payment
+5. Return flight booking
+6. Full multi-passenger support
+7. Real Amadeus fare condition retrieval

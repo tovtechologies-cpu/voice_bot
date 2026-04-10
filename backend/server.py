@@ -1772,14 +1772,28 @@ async def handle_message(phone: str, message_text: str, audio_id: str = None, im
         # Check for passenger profile
         passenger = await get_passenger_by_phone(phone)
         if passenger:
-            # Returning user
             await update_session(phone, {"passenger_id": passenger["id"]})
             await handle_returning_user(phone, passenger, lang)
             return
         else:
-            # New user — start enrollment
             await handle_new_user(phone, lang)
             return
+
+    # ===== EXISTING TRAVEL FLOW STATES =====
+
+    # Allow cancel/refund/modify from any travel-collection state
+    if text in ["remboursement", "refund", "rembourser"] and state in [
+        ConversationState.ASKING_TRAVEL_PURPOSE, ConversationState.AWAITING_DESTINATION,
+        ConversationState.AWAITING_DATE, ConversationState.ASKING_PASSENGER_COUNT
+    ]:
+        await start_cancellation_flow(phone, lang)
+        return
+    if text in ["modifier", "changer", "change", "modify"] and state in [
+        ConversationState.ASKING_TRAVEL_PURPOSE, ConversationState.AWAITING_DESTINATION,
+        ConversationState.AWAITING_DATE, ConversationState.ASKING_PASSENGER_COUNT
+    ]:
+        await start_modification_flow(phone, lang)
+        return
 
     # ===== EXISTING TRAVEL FLOW STATES =====
 
