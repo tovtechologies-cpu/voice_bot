@@ -1,16 +1,18 @@
-# Travelio PRD - WhatsApp Travel Booking Agent v4.0
+# Travelio PRD - WhatsApp Travel Booking Agent v5.0
 
 ## Problem Statement
 Build Travelio as a WhatsApp-only conversational agent for booking flights.
 No web frontend. Entire journey happens inside WhatsApp.
 
 ## Architecture
-- **Backend**: FastAPI webhook receiver
-- **AI**: Claude Sonnet 4.5 (intent parsing)
+- **Backend**: FastAPI webhook receiver (server.py)
+- **AI**: Claude Sonnet 4.5 (intent parsing via Emergent LLM Key)
 - **Flights**: Amadeus Flight Offers Search API
 - **Pricing**: Travelio margin on all Amadeus prices
-- **Payment**: MTN MoMo Sandbox
+- **Payment**: MTN MoMo, Moov Money, Google Pay, Apple Pay (via Stripe)
+- **Voice**: OpenAI Whisper (via Emergent LLM Key) with .ogg→.mp3 conversion
 - **Delivery**: PDF ticket + QR code via WhatsApp
+- **Frontend**: React status dashboard only (no consumer UX)
 
 ## Travelio Pricing Rule
 ```
@@ -21,9 +23,9 @@ Display in EUR and XOF (1 EUR = 655.957 XOF fixed rate)
 ## Autonomous Flight Categorization
 | Category | Logic | Label |
 |----------|-------|-------|
-| PLUS_BAS | Lowest final_price | 💚 LE PLUS BAS |
-| PLUS_RAPIDE | Shortest duration | ⚡ LE PLUS RAPIDE |
-| PREMIUM | Highest score | 👑 PREMIUM |
+| PLUS_BAS | Lowest final_price | LE PLUS BAS |
+| PLUS_RAPIDE | Shortest duration | LE PLUS RAPIDE |
+| PREMIUM | Highest score | PREMIUM |
 
 **PREMIUM Score Formula:**
 ```
@@ -31,29 +33,21 @@ score = (1/price * 0.4) + (1/duration * 0.4) + (direct_bonus * 0.2)
 direct_bonus = 1.0 if direct, 0.5 if 1 stop, 0 if 2+ stops
 ```
 
-## WhatsApp Message Format
-```
-✈️ *Travelio — 3 options trouvées*
-{origin} → {destination} | {date}
-
-━━━━━━━━━━━━━━━━━━━━
-💚 *LE PLUS BAS*
-{airline} | {stops}
-Durée : {duration}
-Prix : *{price}€* ({price_xof} XOF)
-Taper *1* pour sélectionner
-...
-━━━━━━━━━━━━━━━━━━━━
-Répondez 1, 2 ou 3 pour continuer.
-```
-
 ## Conversation States
 1. `idle` → Travel request
 2. `awaiting_destination` → Missing destination
 3. `awaiting_date` → Missing date
 4. `awaiting_flight_selection` → Show 3 options
-5. `awaiting_payment_confirmation` → Confirm selected flight
-6. `awaiting_momo_approval` → Payment polling
+5. `awaiting_payment_method` → Show 4 payment options
+6. `awaiting_mobile_payment` → MoMo/Moov polling
+7. `awaiting_card_payment` → Stripe payment link sent
+8. `retry` → Payment failed, retry/change/cancel
+
+## Payment Methods
+1. MTN MoMo - Mobile money (XOF)
+2. Moov Money (Flooz) - Mobile money (XOF)
+3. Google Pay - via Stripe PaymentIntent
+4. Apple Pay - via Stripe PaymentIntent
 
 ## What's Implemented (April 2026)
 - [x] WhatsApp webhook receiver (GET verify + POST messages)
@@ -63,26 +57,53 @@ Répondez 1, 2 ou 3 pour continuer.
 - [x] Travelio pricing margin
 - [x] EUR/XOF dual currency display
 - [x] MTN MoMo payment flow with polling
+- [x] Moov Money payment flow with polling
+- [x] Google Pay via Stripe PaymentIntent
+- [x] Apple Pay via Stripe PaymentIntent
+- [x] PaymentService abstraction (unified 4-operator handler)
+- [x] Payment retry/change/cancel flow
 - [x] PDF ticket generation with QR code
-- [x] Bilingual support (FR/EN)
+- [x] Whisper voice transcription (.ogg → .mp3 auto-conversion)
+- [x] French/English language detection
+- [x] Frontend status dashboard with per-operator health indicators
+- [x] Bilingual WhatsApp message templates
+- [x] Session state management (MongoDB)
 - [x] Graceful fallbacks for all APIs
-- [x] Session state management
+
+## API Endpoints
+- `GET /api/webhook` - WhatsApp verification
+- `POST /api/webhook` - WhatsApp incoming messages
+- `POST /api/momo/callback` - MoMo payment callback
+- `POST /api/moov/callback` - Moov payment callback
+- `POST /api/stripe/webhook` - Stripe payment webhook
+- `GET /api/pay/{booking_ref}` - Stripe payment page
+- `GET /api/health` - Detailed health with per-operator status
+- `GET /api/tickets/{filename}` - PDF ticket download
+- `POST /api/test/message` - Test message simulation
+- `POST /api/test/transcribe` - Test audio transcription
+- `GET /api/test/flights` - Test flight search
 
 ## Environment Variables
 ```
-EMERGENT_LLM_KEY=         # Claude Sonnet 4.5
+EMERGENT_LLM_KEY=         # Claude + Whisper
 AMADEUS_API_KEY=          # Amadeus API
 AMADEUS_API_SECRET=       # Amadeus Secret
-OPENAI_API_KEY=           # Whisper transcription
 MOMO_SUBSCRIPTION_KEY=    # MoMo payments
+MOMO_API_USER=            # MoMo user
+MOMO_API_KEY=             # MoMo key
+MOOV_API_KEY=             # Moov payments
+STRIPE_SECRET_KEY=        # Stripe (Google/Apple Pay)
+STRIPE_PUBLISHABLE_KEY=   # Stripe frontend
+STRIPE_WEBHOOK_SECRET=    # Stripe webhooks
 WHATSAPP_PHONE_ID=        # WhatsApp Cloud API
 WHATSAPP_TOKEN=           # WhatsApp token
 ```
 
-## Next Steps
-1. Configure WhatsApp Business API in Meta Developer Console
-2. Get Amadeus production API credentials
-3. Set up MTN MoMo production credentials
-4. Add voice message transcription (Whisper)
-5. Implement return flight booking
-6. Add passenger name collection
+## Next Steps (Backlog)
+1. Configure WhatsApp Business API in Meta Developer Console (External)
+2. Stripe Domain Verification for Apple Pay (External)
+3. Implement Celtiis Cash payment (pending partner agreement)
+4. Return flight booking
+5. Passenger name collection
+6. Get Amadeus production credentials
+7. Set up MTN MoMo/Moov Money production credentials
