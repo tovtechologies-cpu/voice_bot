@@ -1,7 +1,9 @@
 """
-Travelio v5.0 - Comprehensive Backend Tests
+Travelio v5.0 - Comprehensive Backend Tests (Updated for Enrollment Flow)
 Tests: Health endpoint, WhatsApp conversation flow, payment operators, 
 flight categorization, booking creation, PDF tickets, audio transcription
+
+Note: v5.0 requires enrollment before booking. Tests now include enrollment steps.
 """
 import pytest
 import requests
@@ -11,6 +13,27 @@ import uuid
 import tempfile
 
 BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://voice-travel-booking.preview.emergentagent.com').rstrip('/')
+
+
+def create_enrolled_session(phone: str) -> dict:
+    """Helper: Create a session with completed enrollment"""
+    # Start enrollment
+    requests.post(f"{BASE_URL}/api/test/message", params={"phone": phone, "message": "bonjour"})
+    # Select manual entry
+    requests.post(f"{BASE_URL}/api/test/message", params={"phone": phone, "message": "3"})
+    # Enter first name
+    requests.post(f"{BASE_URL}/api/test/message", params={"phone": phone, "message": "Test"})
+    # Enter last name
+    requests.post(f"{BASE_URL}/api/test/message", params={"phone": phone, "message": "User"})
+    # Skip passport
+    requests.post(f"{BASE_URL}/api/test/message", params={"phone": phone, "message": "passer"})
+    # Confirm profile
+    requests.post(f"{BASE_URL}/api/test/message", params={"phone": phone, "message": "1"})
+    # Select "pour moi"
+    requests.post(f"{BASE_URL}/api/test/message", params={"phone": phone, "message": "1"})
+    # Enter passenger count
+    response = requests.post(f"{BASE_URL}/api/test/message", params={"phone": phone, "message": "1"})
+    return response.json()
 
 
 class TestHealthEndpoint:
@@ -77,8 +100,8 @@ class TestWhatsAppConversationFlow:
         """Generate unique phone for clean session"""
         return f"229{uuid.uuid4().hex[:8]}"
     
-    def test_welcome_message(self, unique_phone):
-        """Test welcome/start command"""
+    def test_new_user_gets_enrollment(self, unique_phone):
+        """Test new user gets enrollment prompt"""
         response = requests.post(
             f"{BASE_URL}/api/test/message",
             params={"phone": unique_phone, "message": "bonjour"}
@@ -87,32 +110,38 @@ class TestWhatsAppConversationFlow:
         data = response.json()
         
         session = data.get("session", {})
-        assert session.get("state") == "idle"
-        print(f"✓ Welcome message works, state=idle")
+        assert session.get("state") == "enrollment_method"
+        print(f"✓ New user gets enrollment prompt, state=enrollment_method")
     
-    def test_travel_request_to_flight_selection(self, unique_phone):
-        """Test travel request transitions to awaiting_flight_selection"""
+    def test_travel_request_after_enrollment(self, unique_phone):
+        """Test travel request transitions to awaiting_flight_selection after enrollment"""
+        # Complete enrollment
+        create_enrolled_session(unique_phone)
+        
+        # Now make travel request
         response = requests.post(
             f"{BASE_URL}/api/test/message",
-            params={"phone": unique_phone, "message": "Je veux un vol Cotonou Paris pour demain"}
+            params={"phone": unique_phone, "message": "Paris"}
         )
         assert response.status_code == 200
         data = response.json()
         
         session = data.get("session", {})
-        assert session.get("state") == "awaiting_flight_selection"
-        assert len(session.get("flights", [])) > 0
-        print(f"✓ Travel request → awaiting_flight_selection")
+        assert session.get("state") == "awaiting_date"
+        print(f"✓ Travel request after enrollment → awaiting_date")
     
     def test_flight_selection_to_payment_method(self, unique_phone):
         """Test flight selection transitions to awaiting_payment_method"""
-        # Step 1: Travel request
-        requests.post(
-            f"{BASE_URL}/api/test/message",
-            params={"phone": unique_phone, "message": "Je veux un vol Cotonou Paris pour demain"}
-        )
+        # Complete enrollment
+        create_enrolled_session(unique_phone)
         
-        # Step 2: Select flight option 1
+        # Destination
+        requests.post(f"{BASE_URL}/api/test/message", params={"phone": unique_phone, "message": "Paris"})
+        
+        # Date
+        requests.post(f"{BASE_URL}/api/test/message", params={"phone": unique_phone, "message": "demain"})
+        
+        # Select flight option 1
         response = requests.post(
             f"{BASE_URL}/api/test/message",
             params={"phone": unique_phone, "message": "1"}
@@ -134,17 +163,17 @@ class TestPaymentOperators:
         """Create session at awaiting_payment_method state"""
         phone = f"229{uuid.uuid4().hex[:8]}"
         
-        # Travel request
-        requests.post(
-            f"{BASE_URL}/api/test/message",
-            params={"phone": phone, "message": "Je veux un vol Cotonou Paris pour demain"}
-        )
+        # Complete enrollment
+        create_enrolled_session(phone)
+        
+        # Destination
+        requests.post(f"{BASE_URL}/api/test/message", params={"phone": phone, "message": "Paris"})
+        
+        # Date
+        requests.post(f"{BASE_URL}/api/test/message", params={"phone": phone, "message": "demain"})
         
         # Select flight
-        requests.post(
-            f"{BASE_URL}/api/test/message",
-            params={"phone": phone, "message": "1"}
-        )
+        requests.post(f"{BASE_URL}/api/test/message", params={"phone": phone, "message": "1"})
         
         return phone
     
@@ -244,7 +273,7 @@ class TestFlightCategorization:
         print(f"✓ All 3 flight categories returned")
         print(f"  PLUS_BAS: {categorized['PLUS_BAS']['final_price']}€")
         print(f"  PLUS_RAPIDE: {categorized['PLUS_RAPIDE']['final_price']}€")
-        print(f"  PREMIUM: {categorized['PLUS_RAPIDE']['final_price']}€")
+        print(f"  PREMIUM: {categorized['PREMIUM']['final_price']}€")
     
     def test_plus_bas_is_cheapest(self):
         """Test PLUS_BAS has lowest price"""
@@ -282,11 +311,14 @@ class TestBookingCreation:
         """Test booking_ref follows TRV-XXXXXX format"""
         phone = f"229{uuid.uuid4().hex[:8]}"
         
-        # Travel request
-        requests.post(
-            f"{BASE_URL}/api/test/message",
-            params={"phone": phone, "message": "Je veux un vol Cotonou Paris pour demain"}
-        )
+        # Complete enrollment
+        create_enrolled_session(phone)
+        
+        # Destination
+        requests.post(f"{BASE_URL}/api/test/message", params={"phone": phone, "message": "Paris"})
+        
+        # Date
+        requests.post(f"{BASE_URL}/api/test/message", params={"phone": phone, "message": "demain"})
         
         # Select flight - this creates booking
         response = requests.post(
@@ -318,25 +350,22 @@ class TestPDFTicketGeneration:
         """Test complete flow generates downloadable ticket"""
         phone = f"229{uuid.uuid4().hex[:8]}"
         
-        # Travel request
-        requests.post(
-            f"{BASE_URL}/api/test/message",
-            params={"phone": phone, "message": "Je veux un vol Cotonou Paris pour demain"}
-        )
+        # Complete enrollment
+        create_enrolled_session(phone)
+        
+        # Destination
+        requests.post(f"{BASE_URL}/api/test/message", params={"phone": phone, "message": "Paris"})
+        
+        # Date
+        requests.post(f"{BASE_URL}/api/test/message", params={"phone": phone, "message": "demain"})
         
         # Select flight
-        resp = requests.post(
-            f"{BASE_URL}/api/test/message",
-            params={"phone": phone, "message": "1"}
-        )
+        resp = requests.post(f"{BASE_URL}/api/test/message", params={"phone": phone, "message": "1"})
         session = resp.json().get("session", {})
         booking_ref = session.get("booking_ref")
         
         # Select MTN MoMo (simulated - auto-succeeds)
-        requests.post(
-            f"{BASE_URL}/api/test/message",
-            params={"phone": phone, "message": "1"}
-        )
+        requests.post(f"{BASE_URL}/api/test/message", params={"phone": phone, "message": "1"})
         
         # Wait for payment polling to complete (simulated payments auto-succeed)
         time.sleep(5)
@@ -364,26 +393,23 @@ class TestPaymentPage:
         # Create a booking and select Google Pay
         phone = f"229{uuid.uuid4().hex[:8]}"
         
-        # Travel request
-        requests.post(
-            f"{BASE_URL}/api/test/message",
-            params={"phone": phone, "message": "Je veux un vol Cotonou Paris pour demain"}
-        )
+        # Complete enrollment
+        create_enrolled_session(phone)
+        
+        # Destination
+        requests.post(f"{BASE_URL}/api/test/message", params={"phone": phone, "message": "Paris"})
+        
+        # Date
+        requests.post(f"{BASE_URL}/api/test/message", params={"phone": phone, "message": "demain"})
         
         # Select flight
-        resp = requests.post(
-            f"{BASE_URL}/api/test/message",
-            params={"phone": phone, "message": "1"}
-        )
+        resp = requests.post(f"{BASE_URL}/api/test/message", params={"phone": phone, "message": "1"})
         session = resp.json().get("session", {})
         booking_ref = session.get("booking_ref")
         
         if booking_ref:
             # Select Google Pay (option 3) - this creates payment intent
-            requests.post(
-                f"{BASE_URL}/api/test/message",
-                params={"phone": phone, "message": "3"}
-            )
+            requests.post(f"{BASE_URL}/api/test/message", params={"phone": phone, "message": "3"})
             
             # Now get payment page - should work with sim mode since Stripe not configured
             response = requests.get(f"{BASE_URL}/api/pay/{booking_ref}?sim=1")
@@ -419,17 +445,17 @@ class TestCancelFlow:
         """Test 'annuler' cancels booking in AWAITING_PAYMENT_METHOD state"""
         phone = f"229{uuid.uuid4().hex[:8]}"
         
-        # Travel request
-        requests.post(
-            f"{BASE_URL}/api/test/message",
-            params={"phone": phone, "message": "Je veux un vol Cotonou Paris pour demain"}
-        )
+        # Complete enrollment
+        create_enrolled_session(phone)
+        
+        # Destination
+        requests.post(f"{BASE_URL}/api/test/message", params={"phone": phone, "message": "Paris"})
+        
+        # Date
+        requests.post(f"{BASE_URL}/api/test/message", params={"phone": phone, "message": "demain"})
         
         # Select flight
-        requests.post(
-            f"{BASE_URL}/api/test/message",
-            params={"phone": phone, "message": "1"}
-        )
+        requests.post(f"{BASE_URL}/api/test/message", params={"phone": phone, "message": "1"})
         
         # Cancel
         response = requests.post(
@@ -451,17 +477,17 @@ class TestPaymentRetryFlow:
         """Test retry options: 1=retry, 2=change method, 3=cancel"""
         phone = f"229{uuid.uuid4().hex[:8]}"
         
-        # Travel request
-        requests.post(
-            f"{BASE_URL}/api/test/message",
-            params={"phone": phone, "message": "Je veux un vol Cotonou Paris pour demain"}
-        )
+        # Complete enrollment
+        create_enrolled_session(phone)
+        
+        # Destination
+        requests.post(f"{BASE_URL}/api/test/message", params={"phone": phone, "message": "Paris"})
+        
+        # Date
+        requests.post(f"{BASE_URL}/api/test/message", params={"phone": phone, "message": "demain"})
         
         # Select flight
-        requests.post(
-            f"{BASE_URL}/api/test/message",
-            params={"phone": phone, "message": "1"}
-        )
+        requests.post(f"{BASE_URL}/api/test/message", params={"phone": phone, "message": "1"})
         
         # Select payment with simulate_fail=true
         response = requests.post(
@@ -481,10 +507,9 @@ class TestPaymentRetryFlow:
         data = response.json()
         
         # Should be in retry state or show retry options
-        state = data.get("state", "")
-        resp_text = data.get("response", "")
+        state = data.get("session", {}).get("state", "")
         
-        if state == "retry" or "réessayer" in resp_text.lower() or "retry" in resp_text.lower():
+        if state == "retry":
             print(f"✓ Retry flow triggered, state={state}")
         else:
             print(f"⚠ Retry flow may not have triggered (state={state})")
@@ -493,17 +518,17 @@ class TestPaymentRetryFlow:
         """Test option 3 cancels from retry state"""
         phone = f"229{uuid.uuid4().hex[:8]}"
         
-        # Travel request
-        requests.post(
-            f"{BASE_URL}/api/test/message",
-            params={"phone": phone, "message": "Je veux un vol Cotonou Paris pour demain"}
-        )
+        # Complete enrollment
+        create_enrolled_session(phone)
+        
+        # Destination
+        requests.post(f"{BASE_URL}/api/test/message", params={"phone": phone, "message": "Paris"})
+        
+        # Date
+        requests.post(f"{BASE_URL}/api/test/message", params={"phone": phone, "message": "demain"})
         
         # Select flight
-        requests.post(
-            f"{BASE_URL}/api/test/message",
-            params={"phone": phone, "message": "1"}
-        )
+        requests.post(f"{BASE_URL}/api/test/message", params={"phone": phone, "message": "1"})
         
         # Select payment with simulate_fail
         requests.post(
@@ -522,10 +547,10 @@ class TestPaymentRetryFlow:
         data = response.json()
         
         # Should be idle after cancel
-        if data.get("state") == "idle":
+        if data.get("session", {}).get("state") == "idle":
             print(f"✓ Option 3 cancels from retry state")
         else:
-            print(f"⚠ Cancel from retry may not work (state={data.get('state')})")
+            print(f"⚠ Cancel from retry may not work (state={data.get('session', {}).get('state')})")
 
 
 class TestWhisperTranscription:

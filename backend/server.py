@@ -17,6 +17,7 @@ import json
 import string
 import stripe
 import math
+import re
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -459,8 +460,31 @@ payment_service = PaymentService()
 
 # ========== CONVERSATION STATES ==========
 
+SESSION_TIMEOUT_MINUTES = 30
+
 class ConversationState:
     IDLE = "idle"
+    # Enrollment states
+    NEW = "new"
+    ENROLLMENT_METHOD = "enrollment_method"
+    ENROLLING_SCAN = "enrolling_scan"
+    ENROLLING_MANUAL_FN = "enrolling_manual_fn"
+    ENROLLING_MANUAL_LN = "enrolling_manual_ln"
+    ENROLLING_MANUAL_PP = "enrolling_manual_pp"
+    CONFIRMING_PROFILE = "confirming_profile"
+    # Booking target states
+    ASKING_TRAVEL_PURPOSE = "asking_travel_purpose"
+    SELECTING_THIRD_PARTY = "selecting_third_party"
+    ENROLLING_THIRD_PARTY_METHOD = "enrolling_third_party_method"
+    ENROLLING_TP_SCAN = "enrolling_tp_scan"
+    ENROLLING_TP_MANUAL_FN = "enrolling_tp_manual_fn"
+    ENROLLING_TP_MANUAL_LN = "enrolling_tp_manual_ln"
+    ENROLLING_TP_MANUAL_PP = "enrolling_tp_manual_pp"
+    CONFIRMING_TP_PROFILE = "confirming_tp_profile"
+    SAVE_TP_PROMPT = "save_tp_prompt"
+    # Multi-passenger stub
+    ASKING_PASSENGER_COUNT = "asking_passenger_count"
+    # Travel flow states (existing)
     AWAITING_DESTINATION = "awaiting_destination"
     AWAITING_DATE = "awaiting_date"
     AWAITING_FLIGHT_SELECTION = "awaiting_flight_selection"
@@ -495,7 +519,6 @@ def detect_language(text: str) -> str:
     return "fr" if french_count >= 1 else "en"
 
 def format_duration(iso_duration: str) -> str:
-    import re
     match = re.match(r'PT(?:(\d+)H)?(?:(\d+)M)?', iso_duration)
     if match:
         hours = int(match.group(1) or 0)
@@ -504,7 +527,6 @@ def format_duration(iso_duration: str) -> str:
     return iso_duration
 
 def parse_duration_minutes(iso_duration: str) -> int:
-    import re
     match = re.match(r'PT(?:(\d+)H)?(?:(\d+)M)?', iso_duration)
     if match:
         return int(match.group(1) or 0) * 60 + int(match.group(2) or 0)
@@ -520,12 +542,34 @@ def eur_to_xof(eur: float) -> int:
 # ========== SESSION MANAGEMENT ==========
 
 async def get_or_create_session(phone: str) -> Dict:
+    """Get existing session or create new one. Checks for expiry."""
     session = await db.sessions.find_one({"phone": phone}, {"_id": 0})
     if session:
+        # Check session expiry
+        last = session.get("last_activity")
+        if last:
+            try:
+                last_dt = datetime.fromisoformat(last)
+                if datetime.now(timezone.utc) - last_dt > timedelta(minutes=SESSION_TIMEOUT_MINUTES):
+                    # Session expired — reset but keep phone
+                    logger.info(f"Session expired for {phone}")
+                    await db.sessions.update_one({"phone": phone}, {"$set": _default_session_fields(phone)})
+                    session = await db.sessions.find_one({"phone": phone}, {"_id": 0})
+                    session["_expired"] = True
+                    return session
+            except (ValueError, TypeError):
+                pass
         await db.sessions.update_one({"phone": phone}, {"$set": {"last_activity": datetime.now(timezone.utc).isoformat()}})
         return session
-    
-    new_session = {
+
+    new_session = _default_session_fields(phone)
+    await db.sessions.insert_one(new_session)
+    return new_session
+
+
+def _default_session_fields(phone: str) -> Dict:
+    """Default session fields for a new or reset session."""
+    return {
         "phone": phone,
         "state": ConversationState.IDLE,
         "language": "fr",
@@ -536,16 +580,23 @@ async def get_or_create_session(phone: str) -> Dict:
         "booking_id": None,
         "booking_ref": None,
         "payment_reference": None,
+        # Passenger/enrollment fields
+        "passenger_id": None,
+        "booking_passenger_id": None,
+        "enrollment_data": {},
+        "enrolling_for": None,
         "last_activity": datetime.now(timezone.utc).isoformat()
     }
-    await db.sessions.insert_one(new_session)
-    return new_session
+
 
 async def update_session(phone: str, updates: Dict):
+    """Update specific fields on session."""
     updates["last_activity"] = datetime.now(timezone.utc).isoformat()
     await db.sessions.update_one({"phone": phone}, {"$set": updates})
 
+
 async def clear_session(phone: str):
+    """Reset session to idle, keeping phone."""
     await db.sessions.update_one({"phone": phone}, {"$set": {
         "state": ConversationState.IDLE,
         "intent": {},
@@ -555,8 +606,73 @@ async def clear_session(phone: str):
         "booking_id": None,
         "booking_ref": None,
         "payment_reference": None,
+        "enrollment_data": {},
+        "enrolling_for": None,
+        "booking_passenger_id": None,
         "last_activity": datetime.now(timezone.utc).isoformat()
     }})
+
+
+# ========== PASSENGER MANAGEMENT ==========
+
+NAME_REGEX = re.compile(r"^[a-zA-ZÀ-ÿ\s\-']+$")
+PASSPORT_REGEX = re.compile(r"^[A-Za-z0-9]{6,9}$")
+MAX_THIRD_PARTY_PROFILES = 5
+
+
+async def get_passenger_by_phone(phone: str) -> Optional[Dict]:
+    """Find passenger profile by phone number."""
+    return await db.passengers.find_one({"whatsapp_phone": phone}, {"_id": 0})
+
+
+async def save_passenger(data: Dict) -> str:
+    """Save a new passenger profile. Returns the passenger id."""
+    passenger = {
+        "id": str(uuid.uuid4()),
+        "whatsapp_phone": data.get("whatsapp_phone"),
+        "firstName": data.get("firstName", ""),
+        "lastName": data.get("lastName", ""),
+        "passportNumber": data.get("passportNumber"),
+        "nationality": data.get("nationality"),
+        "dateOfBirth": data.get("dateOfBirth"),
+        "expiryDate": data.get("expiryDate"),
+        "created_by_phone": data.get("created_by_phone"),
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+        "updatedAt": datetime.now(timezone.utc).isoformat()
+    }
+    await db.passengers.insert_one(passenger)
+    return passenger["id"]
+
+
+async def get_third_party_passengers(phone: str) -> List[Dict]:
+    """Get saved third-party passengers created by this phone number."""
+    cursor = db.passengers.find(
+        {"created_by_phone": phone, "whatsapp_phone": None},
+        {"_id": 0}
+    ).sort("createdAt", -1).limit(MAX_THIRD_PARTY_PROFILES)
+    return await cursor.to_list(length=MAX_THIRD_PARTY_PROFILES)
+
+
+async def get_passenger_by_id(passenger_id: str) -> Optional[Dict]:
+    """Get passenger by ID."""
+    return await db.passengers.find_one({"id": passenger_id}, {"_id": 0})
+
+
+def validate_name(name: str) -> bool:
+    """Validate first/last name: letters, spaces, hyphens, apostrophes. Min 2 chars."""
+    return bool(NAME_REGEX.match(name)) and len(name.strip()) >= 2
+
+
+def validate_passport_number(pp: str) -> bool:
+    """Validate passport number: alphanumeric, 6-9 chars."""
+    return bool(PASSPORT_REGEX.match(pp.strip()))
+
+
+def title_case_name(name: str) -> str:
+    """Convert ALL CAPS passport name to Title Case."""
+    if name == name.upper() and len(name) > 1:
+        return name.title()
+    return name
 
 
 # ========== WHATSAPP API ==========
@@ -644,7 +760,6 @@ UNIQUEMENT le JSON."""
         return fallback_parse_intent(text, language)
 
 def fallback_parse_intent(text: str, language: str) -> Dict:
-    import re
     text_lower = text.lower()
     
     destination = None
@@ -855,6 +970,8 @@ def generate_ticket_pdf(booking: Dict) -> str:
     
     qr_data = json.dumps({
         "ref": booking_ref,
+        "passenger": booking.get('passenger_name', 'N/A'),
+        "passport": booking.get('passenger_passport', 'N/A'),
         "route": f"{booking.get('origin')} → {booking.get('destination')}",
         "date": booking.get('departure_date'),
         "price": f"{booking.get('price_eur')}€"
@@ -891,6 +1008,7 @@ def generate_ticket_pdf(booking: Dict) -> str:
         [Paragraph("<b>BOARDING PASS</b>", ParagraphStyle('BP', fontSize=14, textColor=colors.white)), qr_image],
         ["", ""],
         ["Passager", booking.get('passenger_name', 'Guest')],
+        ["Passeport", booking.get('passenger_passport') or 'N/A'],
         ["De", f"{get_city_name(booking.get('origin', ''))} ({booking.get('origin')})"],
         ["À", f"{get_city_name(booking.get('destination', ''))} ({booking.get('destination')})"],
         ["Vol", f"{booking.get('airline')} {booking.get('flight_number')}"],
@@ -1073,6 +1191,205 @@ Flight {get_city_name(booking['origin'])} → {get_city_name(booking['destinatio
 Have a great trip! 🌍"""
 
 
+# ========== PASSPORT OCR ==========
+
+async def download_whatsapp_image(image_id: str) -> Optional[bytes]:
+    """Download image from WhatsApp Cloud API."""
+    if not WHATSAPP_TOKEN or WHATSAPP_TOKEN == 'your_token_here':
+        logger.warning("WhatsApp not configured - cannot download image")
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            url_resp = await client.get(
+                f"https://graph.facebook.com/v18.0/{image_id}",
+                headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
+            )
+            if url_resp.status_code != 200:
+                return None
+            media_url = url_resp.json().get("url")
+            if not media_url:
+                return None
+            img_resp = await client.get(media_url, headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"})
+            if img_resp.status_code == 200:
+                return img_resp.content
+    except Exception as e:
+        logger.error(f"WhatsApp image download error: {e}")
+    return None
+
+
+async def extract_passport_data(image_bytes: bytes) -> Dict[str, Any]:
+    """Extract passport data from image. Uses Google Vision if key present, else pytesseract."""
+    google_key = os.environ.get("GOOGLE_VISION_API_KEY")
+    if google_key and google_key != "your_key_here":
+        return await _extract_with_google_vision(image_bytes, google_key)
+    return await _extract_with_tesseract(image_bytes)
+
+
+async def _extract_with_google_vision(image_bytes: bytes, api_key: str) -> Dict[str, Any]:
+    """Extract MRZ via Google Cloud Vision API."""
+    import base64
+    try:
+        encoded = base64.b64encode(image_bytes).decode("utf-8")
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                f"https://vision.googleapis.com/v1/images:annotate?key={api_key}",
+                json={"requests": [{"image": {"content": encoded}, "features": [{"type": "TEXT_DETECTION"}]}]}
+            )
+            if resp.status_code != 200:
+                logger.error(f"Vision API error: {resp.status_code}")
+                return await _extract_with_tesseract(image_bytes)
+            data = resp.json()
+            text = data.get("responses", [{}])[0].get("fullTextAnnotation", {}).get("text", "")
+            logger.info(f"Google Vision OCR text length: {len(text)}")
+            return _parse_mrz_from_text(text, confidence=0.9)
+    except Exception as e:
+        logger.error(f"Google Vision error: {e}")
+        return await _extract_with_tesseract(image_bytes)
+
+
+async def _extract_with_tesseract(image_bytes: bytes) -> Dict[str, Any]:
+    """Extract MRZ via pytesseract with image preprocessing."""
+    try:
+        from PIL import Image, ImageEnhance, ImageFilter
+        import pytesseract
+        from io import BytesIO
+
+        img = Image.open(BytesIO(image_bytes))
+        # Preprocessing: grayscale + contrast boost
+        img = img.convert("L")
+        enhancer = ImageEnhance.Contrast(img)
+        img = enhancer.enhance(2.0)
+        img = img.filter(ImageFilter.SHARPEN)
+
+        # OCR with specific config for MRZ
+        text = pytesseract.image_to_string(img, config="--psm 6")
+        confidence_data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
+        confidences = [int(c) for c in confidence_data.get("conf", []) if str(c).isdigit() and int(c) > 0]
+        avg_confidence = sum(confidences) / len(confidences) if confidences else 0
+        logger.info(f"Tesseract OCR confidence: {avg_confidence:.1f}%, text length: {len(text)}")
+        return _parse_mrz_from_text(text, confidence=avg_confidence / 100.0)
+    except Exception as e:
+        logger.error(f"Tesseract error: {e}")
+        return {"success": False, "error": str(e), "confidence": 0}
+
+
+def _parse_mrz_from_text(text: str, confidence: float = 0) -> Dict[str, Any]:
+    """Parse MRZ (Machine Readable Zone) from OCR text."""
+    result = {
+        "success": False, "confidence": confidence,
+        "firstName": None, "lastName": None, "passportNumber": None,
+        "nationality": None, "dateOfBirth": None, "expiryDate": None
+    }
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
+
+    # Find MRZ lines (start with P< and contain < characters)
+    mrz_lines = []
+    for line in lines:
+        cleaned = line.replace(" ", "").replace("«", "<").replace("‹", "<")
+        if len(cleaned) >= 30 and ("<" in cleaned or cleaned.startswith("P")):
+            mrz_lines.append(cleaned)
+
+    if len(mrz_lines) >= 2:
+        line1 = mrz_lines[-2]
+        line2 = mrz_lines[-1]
+
+        # Line 1: P<CTYLASTNAME<<FIRSTNAME<...
+        if line1.startswith("P"):
+            parts = line1[5:].split("<<", 1)
+            if len(parts) >= 1:
+                result["lastName"] = title_case_name(parts[0].replace("<", " ").strip())
+            if len(parts) >= 2:
+                result["firstName"] = title_case_name(parts[1].replace("<", " ").strip())
+            # Nationality (positions 2-5)
+            if len(line1) >= 5:
+                result["nationality"] = line1[2:5].replace("<", "")
+
+        # Line 2: PPNUMBER<...YYMMDD...YYMMDD...
+        if len(line2) >= 28:
+            pp = line2[:9].replace("<", "").strip()
+            if pp and len(pp) >= 5:
+                result["passportNumber"] = pp
+
+            # Date of birth: positions 13-18 (YYMMDD)
+            dob_raw = line2[13:19]
+            if dob_raw.isdigit():
+                yy, mm, dd = int(dob_raw[:2]), dob_raw[2:4], dob_raw[4:6]
+                year = 1900 + yy if yy > 30 else 2000 + yy
+                result["dateOfBirth"] = f"{year}-{mm}-{dd}"
+
+            # Expiry date: positions 21-26 (YYMMDD)
+            exp_raw = line2[21:27]
+            if exp_raw.isdigit():
+                yy, mm, dd = int(exp_raw[:2]), exp_raw[2:4], exp_raw[4:6]
+                year = 2000 + yy
+                result["expiryDate"] = f"{year}-{mm}-{dd}"
+
+    # Determine success based on how much we extracted
+    has_name = bool(result["firstName"] or result["lastName"])
+    result["success"] = has_name
+    result["partial"] = has_name and not result["passportNumber"]
+
+    return result
+
+
+async def handle_passport_scan(phone: str, image_id: str, state: str, session: Dict, lang: str):
+    """Process passport photo for OCR enrollment."""
+    is_tp = state in [ConversationState.ENROLLING_TP_SCAN]
+
+    # Download image
+    image_bytes = await download_whatsapp_image(image_id)
+    if not image_bytes:
+        # Simulate: if WhatsApp not configured, cannot process
+        msg = "❌ Impossible de télécharger l'image. Essayez la saisie manuelle (tapez 3)." if lang == "fr" else "❌ Couldn't download image. Try manual entry (type 3)."
+        method_state = ConversationState.ENROLLING_THIRD_PARTY_METHOD if is_tp else ConversationState.ENROLLMENT_METHOD
+        await update_session(phone, {"state": method_state})
+        await send_whatsapp_message(phone, msg)
+        return
+
+    msg = "🔍 Analyse du passeport en cours..." if lang == "fr" else "🔍 Analyzing passport..."
+    await send_whatsapp_message(phone, msg)
+
+    data = await extract_passport_data(image_bytes)
+
+    if not data.get("success"):
+        msg = "❌ Je n'ai pas pu lire votre passeport.\nRéessayez avec une photo plus nette ou choisissez la saisie manuelle (option 3)." if lang == "fr" else "❌ I couldn't read your passport.\nTry again with a clearer photo or choose manual entry (option 3)."
+        method_state = ConversationState.ENROLLING_THIRD_PARTY_METHOD if is_tp else ConversationState.ENROLLMENT_METHOD
+        await update_session(phone, {"state": method_state})
+        await send_whatsapp_message(phone, msg)
+        return
+
+    enrollment = {
+        "firstName": data.get("firstName"),
+        "lastName": data.get("lastName"),
+        "passportNumber": data.get("passportNumber"),
+        "nationality": data.get("nationality"),
+        "dateOfBirth": data.get("dateOfBirth"),
+        "expiryDate": data.get("expiryDate"),
+    }
+
+    if data.get("partial"):
+        # Partial extraction — fill missing via manual entry
+        if not enrollment.get("firstName"):
+            fn_state = ConversationState.ENROLLING_TP_MANUAL_FN if is_tp else ConversationState.ENROLLING_MANUAL_FN
+            await update_session(phone, {"state": fn_state, "enrollment_data": enrollment})
+            msg = "⚠️ Nom partiellement détecté. Quel est le prénom ?" if lang == "fr" else "⚠️ Name partially detected. What is the first name?"
+            await send_whatsapp_message(phone, msg)
+            return
+        if not enrollment.get("lastName"):
+            ln_state = ConversationState.ENROLLING_TP_MANUAL_LN if is_tp else ConversationState.ENROLLING_MANUAL_LN
+            await update_session(phone, {"state": ln_state, "enrollment_data": enrollment})
+            msg = "⚠️ Nom de famille non détecté. Quel est le nom de famille ?" if lang == "fr" else "⚠️ Last name not detected. What is the last name?"
+            await send_whatsapp_message(phone, msg)
+            return
+        # If only passport missing, that's okay — go to confirmation
+        pass
+
+    # Go to confirmation
+    confirm_state = ConversationState.CONFIRMING_TP_PROFILE if is_tp else ConversationState.CONFIRMING_PROFILE
+    await update_session(phone, {"state": confirm_state, "enrollment_data": enrollment})
+    await send_profile_confirmation(phone, enrollment, lang)
+
+
 # ========== VOICE TRANSCRIPTION ==========
 
 async def transcribe_audio(audio_id: str) -> Optional[str]:
@@ -1164,285 +1481,813 @@ async def download_whatsapp_audio(audio_id: str) -> Optional[bytes]:
 
 # ========== MAIN CONVERSATION HANDLER ==========
 
-async def handle_message(phone: str, message_text: str, audio_id: str = None):
+async def handle_message(phone: str, message_text: str, audio_id: str = None, image_id: str = None):
+    """Main entry point for all WhatsApp messages."""
     session = await get_or_create_session(phone)
-    
-    # Handle voice messages - transcribe first
+
+    # Session expiry notification
+    if session.pop("_expired", False):
+        lang = session.get("language", "fr")
+        msg = "⏱️ Session expirée. Envoyez un message pour recommencer." if lang == "fr" else "⏱️ Session expired. Send a message to start again."
+        await send_whatsapp_message(phone, msg)
+        # Don't return — continue processing the message in the fresh session
+
+    # Handle voice messages — transcribe first
     if audio_id and not message_text:
         transcribed = await transcribe_audio(audio_id)
         if transcribed:
             message_text = transcribed
             logger.info(f"Voice transcription for {phone}: '{transcribed[:80]}'")
         else:
-            # Fallback: ask user to type
             lang = session.get("language", "fr")
             msg = "🎤 Je n'ai pas pu transcrire votre message vocal. Pouvez-vous l'écrire ?" if lang == "fr" else "🎤 I couldn't transcribe your voice message. Could you type it instead?"
             await send_whatsapp_message(phone, msg)
             return
-    
-    text = message_text.strip().lower()
-    original_text = message_text.strip()
-    
-    if session.get("state") == ConversationState.IDLE:
-        lang = detect_language(original_text)
-        await update_session(phone, {"language": lang})
+
+    text = message_text.strip().lower() if message_text else ""
+    original_text = message_text.strip() if message_text else ""
+    state = session.get("state", ConversationState.IDLE)
+
+    # Detect language on first meaningful message
+    if state in [ConversationState.IDLE, ConversationState.NEW]:
+        if original_text:
+            lang = detect_language(original_text)
+            await update_session(phone, {"language": lang})
+        else:
+            lang = session.get("language", "fr")
     else:
         lang = session.get("language", "fr")
-    
-    # Handle commands
-    if text in ["start", "bonjour", "hello", "hi", "salut", "aide", "help", "menu"]:
+
+    # Handle image messages — route to passport scan if in scan state
+    if image_id and state in [ConversationState.ENROLLING_SCAN, ConversationState.ENROLLING_TP_SCAN]:
+        await handle_passport_scan(phone, image_id, state, session, lang)
+        return
+
+    # Global cancel command
+    if text in ["annuler", "cancel", "stop", "reset"]:
+        cancelable = [
+            ConversationState.AWAITING_PAYMENT_METHOD, "retry",
+            ConversationState.ENROLLMENT_METHOD, ConversationState.ENROLLING_SCAN,
+            ConversationState.ENROLLING_MANUAL_FN, ConversationState.ENROLLING_MANUAL_LN,
+            ConversationState.ENROLLING_MANUAL_PP, ConversationState.CONFIRMING_PROFILE,
+            ConversationState.ASKING_TRAVEL_PURPOSE, ConversationState.SELECTING_THIRD_PARTY,
+            ConversationState.ENROLLING_THIRD_PARTY_METHOD, ConversationState.ENROLLING_TP_SCAN,
+            ConversationState.ENROLLING_TP_MANUAL_FN, ConversationState.ENROLLING_TP_MANUAL_LN,
+            ConversationState.ENROLLING_TP_MANUAL_PP, ConversationState.CONFIRMING_TP_PROFILE,
+            ConversationState.SAVE_TP_PROMPT,
+        ]
+        if state in cancelable:
+            await clear_session(phone)
+            msg = "❌ Annulé. Envoyez un message pour recommencer." if lang == "fr" else "❌ Cancelled. Send a message to start again."
+            await send_whatsapp_message(phone, msg)
+            return
+
+    # Global start/help command
+    if text in ["start", "aide", "help", "menu"]:
         await clear_session(phone)
-        msg = """✈️ *Bienvenue sur Travelio!*
+        await start_conversation(phone, lang)
+        return
 
-Je suis votre assistant de réservation de vols.
+    # ===== ENROLLMENT STATES =====
 
-💬 Dites-moi simplement où vous voulez aller:
-_"Je veux un vol pour Paris vendredi prochain"_
-_"Billet Cotonou-Dakar pour 2 personnes demain"_
+    if state == ConversationState.ENROLLMENT_METHOD:
+        await handle_enrollment_method_selection(phone, text, session, lang)
+        return
 
-🌍 Destinations: Paris, Dakar, Lagos, Accra, Abidjan...""" if lang == "fr" else """✈️ *Welcome to Travelio!*
-
-I'm your flight booking assistant.
-
-💬 Just tell me where you want to go:
-_"I need a flight to Paris next Friday"_
-_"Ticket Lagos to Accra for 2 people tomorrow"_
-
-🌍 Destinations: Paris, Dakar, Lagos, Accra, Abidjan..."""
+    if state == ConversationState.ENROLLING_SCAN:
+        # User was asked for a photo but sent text instead
+        msg = "📸 Envoyez une *photo* de votre passeport, ou tapez *3* pour la saisie manuelle." if lang == "fr" else "📸 Send a *photo* of your passport, or type *3* for manual entry."
         await send_whatsapp_message(phone, msg)
         return
-    
-    if text in ["annuler", "cancel", "stop", "reset"] and session.get("state") in [ConversationState.AWAITING_PAYMENT_METHOD, "retry"]:
-        await clear_session(phone)
-        msg = "❌ Réservation annulée. Envoyez un message pour recommencer." if lang == "fr" else "❌ Booking cancelled. Send a message to start again."
+
+    if state == ConversationState.ENROLLING_MANUAL_FN:
+        await handle_manual_first_name(phone, original_text, session, lang, is_tp=False)
+        return
+
+    if state == ConversationState.ENROLLING_MANUAL_LN:
+        await handle_manual_last_name(phone, original_text, session, lang, is_tp=False)
+        return
+
+    if state == ConversationState.ENROLLING_MANUAL_PP:
+        await handle_manual_passport(phone, original_text, session, lang, is_tp=False)
+        return
+
+    if state == ConversationState.CONFIRMING_PROFILE:
+        await handle_profile_confirmation(phone, text, session, lang, is_tp=False)
+        return
+
+    # ===== THIRD-PARTY ENROLLMENT STATES =====
+
+    if state == ConversationState.ASKING_TRAVEL_PURPOSE:
+        await handle_travel_purpose(phone, text, session, lang)
+        return
+
+    if state == ConversationState.SELECTING_THIRD_PARTY:
+        await handle_third_party_selection(phone, text, session, lang)
+        return
+
+    if state == ConversationState.ENROLLING_THIRD_PARTY_METHOD:
+        await handle_enrollment_method_selection(phone, text, session, lang, is_tp=True)
+        return
+
+    if state == ConversationState.ENROLLING_TP_SCAN:
+        msg = "📸 Envoyez une *photo* du passeport, ou tapez *3* pour la saisie manuelle." if lang == "fr" else "📸 Send a *photo* of the passport, or type *3* for manual entry."
         await send_whatsapp_message(phone, msg)
         return
-    
-    state = session.get("state", ConversationState.IDLE)
-    
-    # STATE: IDLE - Parse travel intent
+
+    if state == ConversationState.ENROLLING_TP_MANUAL_FN:
+        await handle_manual_first_name(phone, original_text, session, lang, is_tp=True)
+        return
+
+    if state == ConversationState.ENROLLING_TP_MANUAL_LN:
+        await handle_manual_last_name(phone, original_text, session, lang, is_tp=True)
+        return
+
+    if state == ConversationState.ENROLLING_TP_MANUAL_PP:
+        await handle_manual_passport(phone, original_text, session, lang, is_tp=True)
+        return
+
+    if state == ConversationState.CONFIRMING_TP_PROFILE:
+        await handle_profile_confirmation(phone, text, session, lang, is_tp=True)
+        return
+
+    if state == ConversationState.SAVE_TP_PROMPT:
+        await handle_save_tp_prompt(phone, text, session, lang)
+        return
+
+    # ===== MULTI-PASSENGER STUB =====
+
+    if state == ConversationState.ASKING_PASSENGER_COUNT:
+        await handle_passenger_count(phone, text, session, lang)
+        return
+
+    # ===== IDLE — Entry point: profile check =====
+
     if state == ConversationState.IDLE:
-        intent = await parse_travel_intent(original_text, lang)
-        
-        if not intent.get("destination"):
-            msg = "🤔 Quelle est votre destination ? (ex: Paris, Dakar, Lagos...)" if lang == "fr" else "🤔 What's your destination? (e.g., Paris, Dakar, Lagos...)"
-            await update_session(phone, {"state": ConversationState.AWAITING_DESTINATION, "intent": intent})
-            await send_whatsapp_message(phone, msg)
+        # Check if greeting
+        if text in ["bonjour", "hello", "hi", "salut"]:
+            await start_conversation(phone, lang)
             return
-        
-        if not intent.get("departure_date"):
-            msg = "📅 Quelle est votre date de départ ? (ex: demain, vendredi, 15 janvier...)" if lang == "fr" else "📅 When do you want to depart? (e.g., tomorrow, Friday, January 15...)"
-            await update_session(phone, {"state": ConversationState.AWAITING_DATE, "intent": intent})
-            await send_whatsapp_message(phone, msg)
+
+        # Check for passenger profile
+        passenger = await get_passenger_by_phone(phone)
+        if passenger:
+            # Returning user
+            await update_session(phone, {"passenger_id": passenger["id"]})
+            await handle_returning_user(phone, passenger, lang)
             return
-        
-        await search_and_show_flights(phone, intent, lang)
-        return
-    
-    # STATE: AWAITING_DESTINATION
+        else:
+            # New user — start enrollment
+            await handle_new_user(phone, lang)
+            return
+
+    # ===== EXISTING TRAVEL FLOW STATES =====
+
     if state == ConversationState.AWAITING_DESTINATION:
-        intent = session.get("intent", {})
-        dest_code = get_airport_code(original_text)
-        if dest_code:
-            intent["destination"] = dest_code
-        else:
-            parsed = await parse_travel_intent(original_text, lang)
-            if parsed.get("destination"):
-                intent["destination"] = get_airport_code(parsed["destination"]) or parsed["destination"]
-            else:
-                msg = "❓ Je n'ai pas reconnu cette ville. Essayez: Paris, Dakar, Lagos..." if lang == "fr" else "❓ I didn't recognize that city. Try: Paris, Dakar, Lagos..."
-                await send_whatsapp_message(phone, msg)
-                return
-        
-        if not intent.get("departure_date"):
-            msg = "📅 Quelle est votre date de départ ?" if lang == "fr" else "📅 When do you want to depart?"
-            await update_session(phone, {"state": ConversationState.AWAITING_DATE, "intent": intent})
-            await send_whatsapp_message(phone, msg)
-            return
-        
-        await search_and_show_flights(phone, intent, lang)
+        await handle_awaiting_destination(phone, original_text, session, lang)
         return
-    
-    # STATE: AWAITING_DATE
+
     if state == ConversationState.AWAITING_DATE:
-        intent = session.get("intent", {})
-        parsed = await parse_travel_intent(f"vol {original_text}", lang)
-        if parsed.get("departure_date"):
-            intent["departure_date"] = parsed["departure_date"]
-        else:
-            today = datetime.now()
-            if "demain" in text or "tomorrow" in text:
-                intent["departure_date"] = (today + timedelta(days=1)).strftime("%Y-%m-%d")
-            elif "après-demain" in text:
-                intent["departure_date"] = (today + timedelta(days=2)).strftime("%Y-%m-%d")
-            else:
-                msg = "❓ Je n'ai pas compris la date. Essayez: demain, vendredi prochain, 15 janvier..." if lang == "fr" else "❓ I didn't understand the date. Try: tomorrow, next Friday, January 15..."
-                await send_whatsapp_message(phone, msg)
-                return
-        
-        await search_and_show_flights(phone, intent, lang)
+        await handle_awaiting_date(phone, original_text, text, session, lang)
         return
-    
-    # STATE: AWAITING_FLIGHT_SELECTION
+
     if state == ConversationState.AWAITING_FLIGHT_SELECTION:
-        flights = session.get("flights", [])
-        
-        selection = None
-        if text in ["1", "un", "one", "premier", "plus bas"]:
-            selection = "PLUS_BAS"
-        elif text in ["2", "deux", "two", "deuxième", "rapide"]:
-            selection = "PLUS_RAPIDE"
-        elif text in ["3", "trois", "three", "troisième", "premium"]:
-            selection = "PREMIUM"
-        
-        if not selection:
-            msg = "❓ Tapez 1, 2 ou 3 pour choisir un vol" if lang == "fr" else "❓ Type 1, 2, or 3 to select a flight"
-            await send_whatsapp_message(phone, msg)
-            return
-        
-        selected = next((f for f in flights if f.get("category") == selection), None)
-        if not selected:
-            msg = "❌ Option non disponible." if lang == "fr" else "❌ Option not available."
-            await send_whatsapp_message(phone, msg)
-            return
-        
-        # Create booking
-        booking_ref = generate_booking_ref()
-        booking = {
-            "id": str(uuid.uuid4()),
-            "booking_ref": booking_ref,
-            "phone": phone,
-            "passenger_name": phone,
-            "airline": selected["airline"],
-            "flight_number": selected["flight_number"],
-            "origin": selected["origin"],
-            "destination": selected["destination"],
-            "departure_date": selected.get("departure_time", "").split("T")[0],
-            "price_eur": selected["final_price"],
-            "price_xof": selected["price_xof"],
-            "category": selected["category"],
-            "status": "awaiting_payment",
-            "payment_method": None,
-            "created_at": datetime.now(timezone.utc).isoformat()
-        }
-        await db.bookings.insert_one(booking)
-        
-        await update_session(phone, {
-            "state": ConversationState.AWAITING_PAYMENT_METHOD,
-            "selected_flight": selected,
-            "booking_id": booking["id"],
-            "booking_ref": booking_ref
-        })
-        
-        await send_whatsapp_message(phone, format_payment_method_selection(selected["final_price"], lang))
+        await handle_flight_selection(phone, text, session, lang)
         return
-    
-    # STATE: AWAITING_PAYMENT_METHOD
+
     if state == ConversationState.AWAITING_PAYMENT_METHOD:
-        selected = session.get("selected_flight")
-        booking_ref = session.get("booking_ref")
-        booking_id = session.get("booking_id")
-        
-        if not selected or not booking_ref:
-            await clear_session(phone)
-            msg = "❌ Session expirée. Recommencez." if lang == "fr" else "❌ Session expired. Start again."
-            await send_whatsapp_message(phone, msg)
-            return
-        
-        operator = None
-        if text in ["1", "mtn", "momo", "mtn momo"]:
-            operator = PaymentOperator.MTN_MOMO
-        elif text in ["2", "moov", "flooz", "moov money"]:
-            operator = PaymentOperator.MOOV_MONEY
-        elif text in ["3", "google", "google pay", "gpay"]:
-            operator = PaymentOperator.GOOGLE_PAY
-        elif text in ["4", "apple", "apple pay", "apay"]:
-            operator = PaymentOperator.APPLE_PAY
-        
-        if not operator:
-            msg = "❓ Répondez 1, 2, 3 ou 4" if lang == "fr" else "❓ Reply 1, 2, 3, or 4"
-            await send_whatsapp_message(phone, msg)
-            return
-        
-        # Update booking with payment method
-        await db.bookings.update_one({"id": booking_id}, {"$set": {"payment_method": operator}})
-        
-        # Initiate payment
-        result = await payment_service.request_payment(
-            operator=operator,
-            phone=phone,
-            amount_eur=selected["final_price"],
-            booking_id=booking_ref,
-            destination=get_city_name(selected["destination"])
-        )
-        
-        if result.get("status") == "error":
-            await send_whatsapp_message(phone, format_payment_failed(operator, lang))
-            await send_whatsapp_message(phone, format_retry_options(operator, lang))
-            await update_session(phone, {"state": "retry", "selected_payment_method": operator})
-            return
-        
-        await update_session(phone, {
-            "payment_reference": result.get("reference_id"),
-            "selected_payment_method": operator
-        })
-        
-        if operator in [PaymentOperator.MTN_MOMO, PaymentOperator.MOOV_MONEY]:
-            # Mobile money - send notification and poll
-            amount_xof = eur_to_xof(selected["final_price"])
-            await send_whatsapp_message(phone, format_mobile_payment_initiated(operator, booking_ref, amount_xof, lang, result.get("is_simulated", False)))
-            
-            await update_session(phone, {"state": ConversationState.AWAITING_MOBILE_PAYMENT})
-            
-            # Start polling in background
-            asyncio.create_task(poll_and_complete_payment(
-                phone, booking_id, booking_ref, operator, result["reference_id"], lang
-            ))
-        else:
-            # Card payment - send link
-            await send_whatsapp_message(phone, format_card_payment_link(result["payment_url"], lang))
-            await update_session(phone, {"state": ConversationState.AWAITING_CARD_PAYMENT})
-        
+        await handle_payment_method(phone, text, session, lang)
         return
-    
-    # STATE: Retry
+
     if state == "retry":
-        last_operator = session.get("selected_payment_method")
-        
-        if text == "1":
-            # Retry same method
-            await update_session(phone, {"state": ConversationState.AWAITING_PAYMENT_METHOD, "_test_force_fail": False})
-            await handle_message(phone, last_operator.replace("_", " ") if last_operator else "1")
-        elif text == "2":
-            # Choose different method
-            selected = session.get("selected_flight")
-            if selected:
-                await update_session(phone, {"state": ConversationState.AWAITING_PAYMENT_METHOD, "_test_force_fail": False})
-                await send_whatsapp_message(phone, format_payment_method_selection(selected["final_price"], lang))
-            else:
-                await clear_session(phone)
-        elif text == "3":
-            # Cancel booking
-            await clear_session(phone)
-            msg = "❌ Réservation annulée. Envoyez un message pour recommencer." if lang == "fr" else "❌ Booking cancelled. Send a message to start again."
-            await send_whatsapp_message(phone, msg)
-        else:
-            # Show retry options again
-            await send_whatsapp_message(phone, format_retry_options(last_operator or "payment", lang))
+        await handle_retry(phone, text, session, lang)
         return
-    
-    # STATE: AWAITING_MOBILE_PAYMENT
+
     if state == ConversationState.AWAITING_MOBILE_PAYMENT:
         msg = "⏳ Paiement en cours... Approuvez sur votre téléphone." if lang == "fr" else "⏳ Payment in progress... Approve on your phone."
         await send_whatsapp_message(phone, msg)
         return
-    
-    # STATE: AWAITING_CARD_PAYMENT
+
     if state == ConversationState.AWAITING_CARD_PAYMENT:
         booking_ref = session.get("booking_ref")
         msg = f"⏳ En attente du paiement...\nUtilisez le lien envoyé pour payer.\nRéférence : {booking_ref}" if lang == "fr" else f"⏳ Waiting for payment...\nUse the link sent to complete payment.\nReference: {booking_ref}"
         await send_whatsapp_message(phone, msg)
         return
+
+    # Fallback for unknown state
+    await clear_session(phone)
+    await start_conversation(phone, lang)
+
+
+# ========== CONVERSATION ENTRY POINTS ==========
+
+async def start_conversation(phone: str, lang: str):
+    """Start a fresh conversation — check profile, then route."""
+    passenger = await get_passenger_by_phone(phone)
+    if passenger:
+        await update_session(phone, {"passenger_id": passenger["id"]})
+        await handle_returning_user(phone, passenger, lang)
+    else:
+        await handle_new_user(phone, lang)
+
+
+async def handle_new_user(phone: str, lang: str):
+    """New user — no profile found. Start enrollment."""
+    if lang == "fr":
+        msg = """👋 Bienvenue sur Travelio !
+Avant de rechercher votre vol, j'ai besoin de votre nom pour le billet.
+
+Comment souhaitez-vous renseigner vos informations ?
+
+1️⃣ Scanner mon passeport (photo)
+2️⃣ Envoyer une photo de mon passeport
+3️⃣ Saisie manuelle"""
+    else:
+        msg = """👋 Welcome to Travelio!
+Before searching for your flight, I need your name for the ticket.
+
+How would you like to provide your information?
+
+1️⃣ Scan my passport (photo)
+2️⃣ Send a photo of my passport
+3️⃣ Manual entry"""
+    await update_session(phone, {"state": ConversationState.ENROLLMENT_METHOD, "enrolling_for": "self"})
+    await send_whatsapp_message(phone, msg)
+
+
+async def handle_returning_user(phone: str, passenger: Dict, lang: str):
+    """Returning user — profile found. Ask booking target."""
+    fn = passenger.get("firstName", "")
+    ln = passenger.get("lastName", "")
+    if lang == "fr":
+        msg = f"""👋 Rebonjour {fn} !
+Réservez-vous ce vol pour vous-même ou pour quelqu'un d'autre ?
+
+1️⃣ Pour moi ({fn} {ln})
+2️⃣ Pour un tiers"""
+    else:
+        msg = f"""👋 Welcome back {fn}!
+Are you booking this flight for yourself or someone else?
+
+1️⃣ For me ({fn} {ln})
+2️⃣ For someone else"""
+    await update_session(phone, {"state": ConversationState.ASKING_TRAVEL_PURPOSE})
+    await send_whatsapp_message(phone, msg)
+
+
+# ========== ENROLLMENT HANDLERS ==========
+
+async def handle_enrollment_method_selection(phone: str, text: str, session: Dict, lang: str, is_tp: bool = False):
+    """Handle enrollment method choice: 1/2=scan, 3=manual."""
+    if text in ["1", "2"]:
+        if lang == "fr":
+            msg = """📸 Envoyez une photo de votre passeport.
+Assurez-vous que la photo est nette et que les deux lignes du bas sont visibles (zone MRZ)."""
+        else:
+            msg = """📸 Send a photo of your passport.
+Make sure the photo is clear and the two bottom lines are visible (MRZ zone)."""
+        scan_state = ConversationState.ENROLLING_TP_SCAN if is_tp else ConversationState.ENROLLING_SCAN
+        await update_session(phone, {"state": scan_state})
+        await send_whatsapp_message(phone, msg)
+    elif text in ["3", "manuel", "manual", "saisie"]:
+        if lang == "fr":
+            msg = "✏️ Quel est votre prénom ?\n(tel qu'il apparaît sur votre passeport)"
+        else:
+            msg = "✏️ What is your first name?\n(as it appears on your passport)"
+        fn_state = ConversationState.ENROLLING_TP_MANUAL_FN if is_tp else ConversationState.ENROLLING_MANUAL_FN
+        await update_session(phone, {"state": fn_state, "enrollment_data": {}})
+        await send_whatsapp_message(phone, msg)
+    else:
+        msg = "❓ Répondez 1, 2 ou 3" if lang == "fr" else "❓ Reply 1, 2, or 3"
+        await send_whatsapp_message(phone, msg)
+
+
+async def handle_manual_first_name(phone: str, text: str, session: Dict, lang: str, is_tp: bool):
+    """Collect first name during manual enrollment."""
+    name = text.strip()
+    if not validate_name(name):
+        msg = "❌ Nom invalide. Utilisez uniquement des lettres, espaces ou tirets. (minimum 2 caractères)" if lang == "fr" else "❌ Invalid name. Use only letters, spaces, or hyphens. (minimum 2 characters)"
+        await send_whatsapp_message(phone, msg)
+        return
+
+    enrollment = session.get("enrollment_data", {})
+    enrollment["firstName"] = title_case_name(name)
+    ln_state = ConversationState.ENROLLING_TP_MANUAL_LN if is_tp else ConversationState.ENROLLING_MANUAL_LN
+    await update_session(phone, {"state": ln_state, "enrollment_data": enrollment})
+
+    msg = "✏️ Quel est votre nom de famille ?" if lang == "fr" else "✏️ What is your last name?"
+    await send_whatsapp_message(phone, msg)
+
+
+async def handle_manual_last_name(phone: str, text: str, session: Dict, lang: str, is_tp: bool):
+    """Collect last name during manual enrollment."""
+    name = text.strip()
+    if not validate_name(name):
+        msg = "❌ Nom invalide. Utilisez uniquement des lettres, espaces ou tirets." if lang == "fr" else "❌ Invalid name. Use only letters, spaces, or hyphens."
+        await send_whatsapp_message(phone, msg)
+        return
+
+    enrollment = session.get("enrollment_data", {})
+    enrollment["lastName"] = title_case_name(name)
+    pp_state = ConversationState.ENROLLING_TP_MANUAL_PP if is_tp else ConversationState.ENROLLING_MANUAL_PP
+    await update_session(phone, {"state": pp_state, "enrollment_data": enrollment})
+
+    if lang == "fr":
+        msg = "✏️ Quel est votre numéro de passeport ?\n(facultatif — tapez 'passer' pour ignorer)"
+    else:
+        msg = "✏️ What is your passport number?\n(optional — type 'skip' to skip)"
+    await send_whatsapp_message(phone, msg)
+
+
+async def handle_manual_passport(phone: str, text: str, session: Dict, lang: str, is_tp: bool):
+    """Collect passport number (optional) during manual enrollment."""
+    enrollment = session.get("enrollment_data", {})
+    txt = text.strip().lower()
+
+    if txt in ["passer", "skip", "ignorer", "-", "non", "no"]:
+        enrollment["passportNumber"] = None
+    else:
+        clean = text.strip().upper()
+        if not validate_passport_number(clean):
+            msg = "❌ Numéro invalide (6-9 caractères alphanumériques). Tapez 'passer' pour ignorer." if lang == "fr" else "❌ Invalid number (6-9 alphanumeric characters). Type 'skip' to skip."
+            await send_whatsapp_message(phone, msg)
+            return
+        enrollment["passportNumber"] = clean
+
+    confirm_state = ConversationState.CONFIRMING_TP_PROFILE if is_tp else ConversationState.CONFIRMING_PROFILE
+    await update_session(phone, {"state": confirm_state, "enrollment_data": enrollment})
+    await send_profile_confirmation(phone, enrollment, lang)
+
+
+async def send_profile_confirmation(phone: str, data: Dict, lang: str):
+    """Send profile confirmation message."""
+    fn = data.get("firstName", "")
+    ln = data.get("lastName", "")
+    pp = data.get("passportNumber") or ("Non renseigné" if lang == "fr" else "Not provided")
+    nat = data.get("nationality") or ("Non renseignée" if lang == "fr" else "Not provided")
+
+    if lang == "fr":
+        msg = f"""✅ Voici les informations que j'ai relevées :
+
+👤 Nom : {ln} {fn}
+🪪 Passeport : {pp}
+🌍 Nationalité : {nat}
+
+Ces informations sont-elles correctes ?
+
+1️⃣ Oui, continuer
+2️⃣ Non, recommencer"""
+    else:
+        msg = f"""✅ Here is the information I collected:
+
+👤 Name: {ln} {fn}
+🪪 Passport: {pp}
+🌍 Nationality: {nat}
+
+Is this information correct?
+
+1️⃣ Yes, continue
+2️⃣ No, start over"""
+    await send_whatsapp_message(phone, msg)
+
+
+async def handle_profile_confirmation(phone: str, text: str, session: Dict, lang: str, is_tp: bool):
+    """Handle yes/no on profile confirmation."""
+    enrollment = session.get("enrollment_data", {})
+
+    if text in ["1", "oui", "yes", "ok", "correct"]:
+        if is_tp:
+            # Third-party: ask if they want to save
+            await update_session(phone, {"state": ConversationState.SAVE_TP_PROMPT})
+            msg = "Souhaitez-vous sauvegarder ce profil pour vos prochaines réservations ?\n1️⃣ Oui  2️⃣ Non" if lang == "fr" else "Would you like to save this profile for future bookings?\n1️⃣ Yes  2️⃣ No"
+            await send_whatsapp_message(phone, msg)
+        else:
+            # Self: save profile
+            passenger_id = await save_passenger({
+                "whatsapp_phone": phone,
+                "firstName": enrollment.get("firstName", ""),
+                "lastName": enrollment.get("lastName", ""),
+                "passportNumber": enrollment.get("passportNumber"),
+                "nationality": enrollment.get("nationality"),
+                "dateOfBirth": enrollment.get("dateOfBirth"),
+                "expiryDate": enrollment.get("expiryDate"),
+                "created_by_phone": phone
+            })
+            await update_session(phone, {
+                "passenger_id": passenger_id,
+                "booking_passenger_id": passenger_id,
+                "enrollment_data": {}
+            })
+            msg = "✅ Profil enregistré. Vous n'aurez plus à ressaisir ces informations la prochaine fois." if lang == "fr" else "✅ Profile saved. You won't need to enter this information again."
+            await send_whatsapp_message(phone, msg)
+
+            # Now ask travel purpose (for me or third party)
+            passenger = await get_passenger_by_id(passenger_id)
+            await handle_returning_user(phone, passenger, lang)
+
+    elif text in ["2", "non", "no"]:
+        # Restart enrollment
+        if is_tp:
+            await update_session(phone, {"state": ConversationState.ENROLLING_THIRD_PARTY_METHOD, "enrollment_data": {}})
+            await handle_enrollment_method_selection(phone, "show", session, lang, is_tp=True)
+            # Re-show method selection
+            if lang == "fr":
+                msg = """Comment souhaitez-vous renseigner les informations ?
+
+1️⃣ Scanner le passeport (photo)
+2️⃣ Envoyer une photo du passeport
+3️⃣ Saisie manuelle"""
+            else:
+                msg = """How would you like to provide the information?
+
+1️⃣ Scan passport (photo)
+2️⃣ Send a photo of the passport
+3️⃣ Manual entry"""
+            await update_session(phone, {"state": ConversationState.ENROLLING_THIRD_PARTY_METHOD})
+            await send_whatsapp_message(phone, msg)
+        else:
+            await update_session(phone, {"state": ConversationState.ENROLLMENT_METHOD, "enrollment_data": {}})
+            await handle_new_user(phone, lang)
+    else:
+        msg = "❓ Répondez 1 (oui) ou 2 (non)" if lang == "fr" else "❓ Reply 1 (yes) or 2 (no)"
+        await send_whatsapp_message(phone, msg)
+
+
+# ========== TRAVEL PURPOSE & THIRD-PARTY HANDLERS ==========
+
+async def handle_travel_purpose(phone: str, text: str, session: Dict, lang: str):
+    """Handle 'for me' or 'for third party' selection."""
+    if text in ["1", "moi", "me", "pour moi", "for me"]:
+        # Booking for self
+        passenger_id = session.get("passenger_id")
+        await update_session(phone, {
+            "booking_passenger_id": passenger_id,
+            "state": ConversationState.ASKING_PASSENGER_COUNT
+        })
+        await handle_passenger_count_prompt(phone, lang)
+
+    elif text in ["2", "tiers", "autre", "other", "someone", "third"]:
+        # Booking for third party
+        await update_session(phone, {"enrolling_for": "third_party"})
+        # Check saved third-party passengers
+        third_parties = await get_third_party_passengers(phone)
+        if third_parties:
+            if lang == "fr":
+                msg = "👤 Pour qui réservez-vous ce vol ?\n\n"
+                for i, tp in enumerate(third_parties, 1):
+                    msg += f"{i}️⃣ {tp['firstName']} {tp['lastName']}\n"
+                msg += f"{len(third_parties) + 1}️⃣ Nouvelle personne"
+            else:
+                msg = "👤 Who are you booking for?\n\n"
+                for i, tp in enumerate(third_parties, 1):
+                    msg += f"{i}️⃣ {tp['firstName']} {tp['lastName']}\n"
+                msg += f"{len(third_parties) + 1}️⃣ New person"
+            await update_session(phone, {
+                "state": ConversationState.SELECTING_THIRD_PARTY,
+                "_tp_list": [tp["id"] for tp in third_parties]
+            })
+            await send_whatsapp_message(phone, msg)
+        else:
+            # No saved third parties — go straight to enrollment
+            if lang == "fr":
+                msg = """👤 Pour qui réservez-vous ce vol ?
+
+1️⃣ Quelqu'un déjà enregistré
+2️⃣ Nouvelle personne"""
+            else:
+                msg = """👤 Who are you booking for?
+
+1️⃣ Someone already registered
+2️⃣ New person"""
+            await update_session(phone, {"state": ConversationState.SELECTING_THIRD_PARTY, "_tp_list": []})
+            await send_whatsapp_message(phone, msg)
+    else:
+        msg = "❓ Répondez 1 ou 2" if lang == "fr" else "❓ Reply 1 or 2"
+        await send_whatsapp_message(phone, msg)
+
+
+async def handle_third_party_selection(phone: str, text: str, session: Dict, lang: str):
+    """Handle third-party passenger selection."""
+    tp_list = session.get("_tp_list", [])
+
+    try:
+        choice = int(text)
+    except (ValueError, TypeError):
+        choice = -1
+
+    # "New person" is always the last option
+    new_person_idx = len(tp_list) + 1 if tp_list else 2
+
+    if text in ["2", "nouvelle", "new"] and not tp_list:
+        choice = new_person_idx
+
+    if 1 <= choice <= len(tp_list):
+        # Selected existing third party
+        tp_id = tp_list[choice - 1]
+        tp = await get_passenger_by_id(tp_id)
+        if tp:
+            await update_session(phone, {
+                "booking_passenger_id": tp_id,
+                "state": ConversationState.ASKING_PASSENGER_COUNT
+            })
+            fn = tp.get("firstName", "")
+            ln = tp.get("lastName", "")
+            msg = f"✅ Réservation pour {fn} {ln}" if lang == "fr" else f"✅ Booking for {fn} {ln}"
+            await send_whatsapp_message(phone, msg)
+            await handle_passenger_count_prompt(phone, lang)
+            return
+
+    if choice == new_person_idx or text in ["nouvelle", "new"]:
+        # New third party — start enrollment
+        if lang == "fr":
+            msg = """Comment souhaitez-vous renseigner les informations du passager ?
+
+1️⃣ Scanner le passeport (photo)
+2️⃣ Envoyer une photo du passeport
+3️⃣ Saisie manuelle"""
+        else:
+            msg = """How would you like to provide the passenger's information?
+
+1️⃣ Scan passport (photo)
+2️⃣ Send a photo of the passport
+3️⃣ Manual entry"""
+        await update_session(phone, {"state": ConversationState.ENROLLING_THIRD_PARTY_METHOD, "enrollment_data": {}})
+        await send_whatsapp_message(phone, msg)
+        return
+
+    # Also handle "1" when tp_list is empty (someone already registered)
+    if text == "1" and not tp_list:
+        msg = "Aucun passager enregistré. Choisissez 2 pour ajouter une nouvelle personne." if lang == "fr" else "No registered passengers. Choose 2 to add a new person."
+        await send_whatsapp_message(phone, msg)
+        return
+
+    msg = f"❓ Répondez un numéro de 1 à {new_person_idx}" if lang == "fr" else f"❓ Reply a number from 1 to {new_person_idx}"
+    await send_whatsapp_message(phone, msg)
+
+
+async def handle_save_tp_prompt(phone: str, text: str, session: Dict, lang: str):
+    """Handle save third-party profile prompt."""
+    enrollment = session.get("enrollment_data", {})
+
+    if text in ["1", "oui", "yes"]:
+        # Check limit
+        existing = await get_third_party_passengers(phone)
+        if len(existing) >= MAX_THIRD_PARTY_PROFILES:
+            # Remove oldest
+            oldest = existing[-1]
+            await db.passengers.delete_one({"id": oldest["id"]})
+
+        passenger_id = await save_passenger({
+            "whatsapp_phone": None,
+            "firstName": enrollment.get("firstName", ""),
+            "lastName": enrollment.get("lastName", ""),
+            "passportNumber": enrollment.get("passportNumber"),
+            "nationality": enrollment.get("nationality"),
+            "dateOfBirth": enrollment.get("dateOfBirth"),
+            "expiryDate": enrollment.get("expiryDate"),
+            "created_by_phone": phone
+        })
+        msg = "✅ Profil sauvegardé." if lang == "fr" else "✅ Profile saved."
+        await send_whatsapp_message(phone, msg)
+    else:
+        # Use for this booking only
+        passenger_id = await save_passenger({
+            "whatsapp_phone": None,
+            "firstName": enrollment.get("firstName", ""),
+            "lastName": enrollment.get("lastName", ""),
+            "passportNumber": enrollment.get("passportNumber"),
+            "nationality": enrollment.get("nationality"),
+            "created_by_phone": f"_temp_{phone}"
+        })
+
+    await update_session(phone, {
+        "booking_passenger_id": passenger_id,
+        "enrollment_data": {},
+        "state": ConversationState.ASKING_PASSENGER_COUNT
+    })
+    await handle_passenger_count_prompt(phone, lang)
+
+
+# ========== MULTI-PASSENGER STUB ==========
+
+async def handle_passenger_count_prompt(phone: str, lang: str):
+    """Ask passenger count (stub — only 1 supported)."""
+    msg = "Combien de passagers voyagent ?\n(répondez 1 pour continuer — multi-passagers disponible prochainement)" if lang == "fr" else "How many passengers are traveling?\n(reply 1 to continue — multi-passenger coming soon)"
+    await update_session(phone, {"state": ConversationState.ASKING_PASSENGER_COUNT})
+    await send_whatsapp_message(phone, msg)
+
+
+async def handle_passenger_count(phone: str, text: str, session: Dict, lang: str):
+    """Handle passenger count — only 1 supported for now."""
+    try:
+        count = int(text)
+    except (ValueError, TypeError):
+        count = 1
+
+    if count > 1:
+        msg = "✈️ La réservation multi-passagers arrive bientôt.\nPour l'instant, je peux traiter 1 passager à la fois." if lang == "fr" else "✈️ Multi-passenger booking coming soon.\nFor now, I can process 1 passenger at a time."
+        await send_whatsapp_message(phone, msg)
+
+    # Continue to travel intent collection
+    await update_session(phone, {"state": ConversationState.IDLE, "intent": {}})
+    if lang == "fr":
+        msg = "💬 Où souhaitez-vous aller ?\n_\"Je veux un vol pour Paris vendredi prochain\"_"
+    else:
+        msg = "💬 Where would you like to go?\n_\"I need a flight to Paris next Friday\"_"
+    # Set state to a special "collecting intent" mode
+    await update_session(phone, {"state": ConversationState.AWAITING_DESTINATION, "intent": {}})
+    await send_whatsapp_message(phone, msg)
+
+
+# ========== REFACTORED EXISTING HANDLERS ==========
+
+async def handle_awaiting_destination(phone: str, original_text: str, session: Dict, lang: str):
+    """Handle destination collection."""
+    intent = session.get("intent", {})
+
+    # Try parsing full travel intent from what user said
+    parsed = await parse_travel_intent(original_text, lang)
+
+    if parsed.get("destination"):
+        dest_code = get_airport_code(parsed["destination"]) or parsed["destination"]
+        intent["destination"] = dest_code
+        if parsed.get("origin"):
+            intent["origin"] = get_airport_code(parsed["origin"]) or parsed.get("origin")
+        if parsed.get("departure_date"):
+            intent["departure_date"] = parsed["departure_date"]
+        if parsed.get("passengers"):
+            intent["passengers"] = parsed["passengers"]
+    else:
+        dest_code = get_airport_code(original_text)
+        if dest_code:
+            intent["destination"] = dest_code
+        else:
+            msg = "❓ Je n'ai pas reconnu cette ville. Essayez: Paris, Dakar, Lagos..." if lang == "fr" else "❓ I didn't recognize that city. Try: Paris, Dakar, Lagos..."
+            await send_whatsapp_message(phone, msg)
+            return
+
+    if not intent.get("departure_date"):
+        msg = "📅 Quelle est votre date de départ ?" if lang == "fr" else "📅 When do you want to depart?"
+        await update_session(phone, {"state": ConversationState.AWAITING_DATE, "intent": intent})
+        await send_whatsapp_message(phone, msg)
+        return
+
+    await search_and_show_flights(phone, intent, lang)
+
+
+async def handle_awaiting_date(phone: str, original_text: str, text: str, session: Dict, lang: str):
+    """Handle date collection."""
+    intent = session.get("intent", {})
+    parsed = await parse_travel_intent(f"vol {original_text}", lang)
+    if parsed.get("departure_date"):
+        intent["departure_date"] = parsed["departure_date"]
+    else:
+        today = datetime.now()
+        if "demain" in text or "tomorrow" in text:
+            intent["departure_date"] = (today + timedelta(days=1)).strftime("%Y-%m-%d")
+        elif "après-demain" in text:
+            intent["departure_date"] = (today + timedelta(days=2)).strftime("%Y-%m-%d")
+        else:
+            msg = "❓ Je n'ai pas compris la date. Essayez: demain, vendredi prochain, 15 janvier..." if lang == "fr" else "❓ I didn't understand the date. Try: tomorrow, next Friday, January 15..."
+            await send_whatsapp_message(phone, msg)
+            return
+
+    await search_and_show_flights(phone, intent, lang)
+
+
+async def handle_flight_selection(phone: str, text: str, session: Dict, lang: str):
+    """Handle flight selection (1/2/3)."""
+    flights = session.get("flights", [])
+
+    selection = None
+    if text in ["1", "un", "one", "premier", "plus bas"]:
+        selection = "PLUS_BAS"
+    elif text in ["2", "deux", "two", "deuxième", "rapide"]:
+        selection = "PLUS_RAPIDE"
+    elif text in ["3", "trois", "three", "troisième", "premium"]:
+        selection = "PREMIUM"
+
+    if not selection:
+        msg = "❓ Tapez 1, 2 ou 3 pour choisir un vol" if lang == "fr" else "❓ Type 1, 2, or 3 to select a flight"
+        await send_whatsapp_message(phone, msg)
+        return
+
+    selected = next((f for f in flights if f.get("category") == selection), None)
+    if not selected:
+        msg = "❌ Option non disponible." if lang == "fr" else "❌ Option not available."
+        await send_whatsapp_message(phone, msg)
+        return
+
+    # Get passenger data for booking
+    booking_passenger_id = session.get("booking_passenger_id")
+    passenger = await get_passenger_by_id(booking_passenger_id) if booking_passenger_id else None
+    passenger_name = f"{passenger['lastName']} {passenger['firstName']}" if passenger else phone
+
+    # Create booking
+    booking_ref = generate_booking_ref()
+    booking = {
+        "id": str(uuid.uuid4()),
+        "booking_ref": booking_ref,
+        "phone": phone,
+        "passenger_id": booking_passenger_id,
+        "passenger_name": passenger_name,
+        "passenger_passport": passenger.get("passportNumber") if passenger else None,
+        "airline": selected["airline"],
+        "flight_number": selected["flight_number"],
+        "origin": selected["origin"],
+        "destination": selected["destination"],
+        "departure_date": selected.get("departure_time", "").split("T")[0],
+        "price_eur": selected["final_price"],
+        "price_xof": selected["price_xof"],
+        "category": selected["category"],
+        "status": "awaiting_payment",
+        "payment_method": None,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.bookings.insert_one(booking)
+
+    await update_session(phone, {
+        "state": ConversationState.AWAITING_PAYMENT_METHOD,
+        "selected_flight": selected,
+        "booking_id": booking["id"],
+        "booking_ref": booking_ref
+    })
+
+    await send_whatsapp_message(phone, format_payment_method_selection(selected["final_price"], lang))
+
+
+async def handle_payment_method(phone: str, text: str, session: Dict, lang: str):
+    """Handle payment method selection (1-4)."""
+    selected = session.get("selected_flight")
+    booking_ref = session.get("booking_ref")
+    booking_id = session.get("booking_id")
+
+    if not selected or not booking_ref:
+        await clear_session(phone)
+        msg = "❌ Session expirée. Recommencez." if lang == "fr" else "❌ Session expired. Start again."
+        await send_whatsapp_message(phone, msg)
+        return
+
+    operator = None
+    if text in ["1", "mtn", "momo", "mtn momo"]:
+        operator = PaymentOperator.MTN_MOMO
+    elif text in ["2", "moov", "flooz", "moov money"]:
+        operator = PaymentOperator.MOOV_MONEY
+    elif text in ["3", "google", "google pay", "gpay"]:
+        operator = PaymentOperator.GOOGLE_PAY
+    elif text in ["4", "apple", "apple pay", "apay"]:
+        operator = PaymentOperator.APPLE_PAY
+
+    if not operator:
+        msg = "❓ Répondez 1, 2, 3 ou 4" if lang == "fr" else "❓ Reply 1, 2, 3, or 4"
+        await send_whatsapp_message(phone, msg)
+        return
+
+    await db.bookings.update_one({"id": booking_id}, {"$set": {"payment_method": operator}})
+
+    result = await payment_service.request_payment(
+        operator=operator, phone=phone, amount_eur=selected["final_price"],
+        booking_id=booking_ref, destination=get_city_name(selected["destination"])
+    )
+
+    if result.get("status") == "error":
+        await send_whatsapp_message(phone, format_payment_failed(operator, lang))
+        await send_whatsapp_message(phone, format_retry_options(operator, lang))
+        await update_session(phone, {"state": "retry", "selected_payment_method": operator})
+        return
+
+    await update_session(phone, {"payment_reference": result.get("reference_id"), "selected_payment_method": operator})
+
+    if operator in [PaymentOperator.MTN_MOMO, PaymentOperator.MOOV_MONEY]:
+        amount_xof = eur_to_xof(selected["final_price"])
+        await send_whatsapp_message(phone, format_mobile_payment_initiated(operator, booking_ref, amount_xof, lang, result.get("is_simulated", False)))
+        await update_session(phone, {"state": ConversationState.AWAITING_MOBILE_PAYMENT})
+        asyncio.create_task(poll_and_complete_payment(phone, booking_id, booking_ref, operator, result["reference_id"], lang))
+    else:
+        await send_whatsapp_message(phone, format_card_payment_link(result["payment_url"], lang))
+        await update_session(phone, {"state": ConversationState.AWAITING_CARD_PAYMENT})
+
+
+async def handle_retry(phone: str, text: str, session: Dict, lang: str):
+    """Handle payment retry state."""
+    last_operator = session.get("selected_payment_method")
+
+    if text == "1":
+        await update_session(phone, {"state": ConversationState.AWAITING_PAYMENT_METHOD, "_test_force_fail": False})
+        await handle_message(phone, last_operator.replace("_", " ") if last_operator else "1")
+    elif text == "2":
+        selected = session.get("selected_flight")
+        if selected:
+            await update_session(phone, {"state": ConversationState.AWAITING_PAYMENT_METHOD, "_test_force_fail": False})
+            await send_whatsapp_message(phone, format_payment_method_selection(selected["final_price"], lang))
+        else:
+            await clear_session(phone)
+    elif text == "3":
+        await clear_session(phone)
+        msg = "❌ Réservation annulée. Envoyez un message pour recommencer." if lang == "fr" else "❌ Booking cancelled. Send a message to start again."
+        await send_whatsapp_message(phone, msg)
+    else:
+        await send_whatsapp_message(phone, format_retry_options(last_operator or "payment", lang))
 
 
 async def search_and_show_flights(phone: str, intent: Dict, lang: str):
@@ -1586,14 +2431,18 @@ async def receive_webhook(request: Request, background_tasks: BackgroundTasks):
             
             if msg_type == "text":
                 text = msg.get("text", {}).get("body", "")
-                background_tasks.add_task(handle_message, phone, text, None)
+                background_tasks.add_task(handle_message, phone, text, None, None)
             elif msg_type == "audio":
                 audio_id = msg.get("audio", {}).get("id")
-                background_tasks.add_task(handle_message, phone, "", audio_id)
+                background_tasks.add_task(handle_message, phone, "", audio_id, None)
+            elif msg_type == "image":
+                image_id = msg.get("image", {}).get("id")
+                caption = msg.get("image", {}).get("caption", "")
+                background_tasks.add_task(handle_message, phone, caption, None, image_id)
             elif msg_type == "interactive":
                 interactive = msg.get("interactive", {})
                 text = interactive.get("button_reply", {}).get("id", "") or interactive.get("list_reply", {}).get("id", "")
-                background_tasks.add_task(handle_message, phone, text, None)
+                background_tasks.add_task(handle_message, phone, text, None, None)
         
         return {"status": "ok"}
     except Exception as e:
@@ -1805,10 +2654,11 @@ async def payment_page(booking_ref: str, sim: int = 0):
     return HTMLResponse(html)
 
 @api_router.post("/test/message")
-async def test_message(phone: str, message: str, simulate_fail: bool = False):
+async def test_message(phone: str, message: str, simulate_fail: bool = False, image_id: str = None):
+    """Test endpoint to simulate WhatsApp messages."""
     if simulate_fail:
         await update_session(phone, {"_test_force_fail": True})
-    await handle_message(phone, message, None)
+    await handle_message(phone, message, None, image_id)
     session = await db.sessions.find_one({"phone": phone}, {"_id": 0})
     return {"status": "processed", "session": session}
 
