@@ -102,6 +102,9 @@ A WhatsApp conversational travel booking agent for Benin/West Africa. Users inte
 - ✅ UX (chunking, rate limiting)
 - ✅ Refactoring (modular architecture)
 
+### Audit (Feb 2026)
+- Complete 16-section technical audit report generated: /app/AUDIT_REPORT.md
+
 ### P1 (Remaining)
 - Natural language yes/no parsing improvements
 - Background message queue for heavy operations
