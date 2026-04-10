@@ -17,7 +17,7 @@ const OPERATOR_META = {
 
 const INTEGRATION_META = {
   claude_ai: { name: "Claude AI", icon: "brain", desc: "Intent parsing" },
-  amadeus: { name: "Amadeus", icon: "plane", desc: "Flight search" },
+  duffel: { name: "Duffel GDS", icon: "plane", desc: "Flight search" },
   whatsapp: { name: "WhatsApp", icon: "comment-dots", desc: "Messaging" },
   whisper: { name: "Whisper", icon: "microphone", desc: "Voice transcription" },
 };
@@ -209,7 +209,7 @@ function App() {
           <div className="space-y-3">
             {[
               { step: "1", icon: "comment-dots", text: "Send a voice or text message with your travel plans" },
-              { step: "2", icon: "search", text: "AI parses your intent and searches Amadeus flights" },
+              { step: "2", icon: "search", text: "AI parses your intent and searches Duffel flights" },
               { step: "3", icon: "list-ol", text: "3 curated options: Cheapest, Fastest, Premium" },
               { step: "4", icon: "hand-pointer", text: "Reply 1, 2, or 3 to select your flight" },
               { step: "5", icon: "wallet", text: "Pay via MoMo, Moov, Google Pay, or Apple Pay" },
@@ -261,7 +261,7 @@ function App() {
           </h2>
           <div className="bg-[rgba(108,99,255,0.06)] rounded-lg p-3">
             <code className="text-xs text-[#A78BFA] block">
-              final_price = amadeus_price + 15€ + 5%
+              final_price = duffel_price + 15EUR + 5%
             </code>
             <p className="text-xs text-[#64748B] mt-1.5">
               Displayed in EUR and XOF (1€ = 655.957 XOF)
@@ -272,7 +272,7 @@ function App() {
         {/* Footer */}
         <footer className="text-center pt-2 pb-4">
           <p className="text-[#334155] text-xs">
-            Amadeus · Claude AI · Stripe · WhatsApp Cloud API
+            Duffel · Claude AI · Stripe · WhatsApp Cloud API
           </p>
         </footer>
       </div>
