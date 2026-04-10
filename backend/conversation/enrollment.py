@@ -14,6 +14,59 @@ from database import db
 logger = logging.getLogger("EnrollmentHandler")
 
 
+async def handle_consent(phone: str, text: str, session: Dict, lang: str):
+    """Handle GDPR consent response."""
+    if text in ["1", "oui", "yes", "ok", "accepte", "accept", "j'accepte"]:
+        # Consent granted — record and proceed to enrollment
+        await update_session(phone, {"_consent_granted": True, "_consent_at": __import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat()})
+        await _show_enrollment_menu(phone, lang, is_tp=False)
+    elif text in ["2", "non", "no"]:
+        if lang == "fr":
+            msg = "Nous respectons votre choix. Sans votre accord, nous ne pouvons pas traiter votre reservation.\n\nEnvoyez un message si vous changez d'avis."
+        else:
+            msg = "We respect your choice. Without your agreement, we cannot process your booking.\n\nSend a message if you change your mind."
+        from services.session import clear_session
+        await clear_session(phone)
+        await send_whatsapp_message(phone, msg)
+    else:
+        msg = "Repondez *1* (accepter) ou *2* (refuser)" if lang == "fr" else "Reply *1* (accept) or *2* (decline)"
+        await send_whatsapp_message(phone, msg)
+
+
+async def _show_enrollment_menu(phone: str, lang: str, is_tp: bool = False):
+    """Show the enrollment method selection menu."""
+    if is_tp:
+        if lang == "fr":
+            msg = """Comment souhaitez-vous renseigner les informations du passager ?
+
+1 Scanner le passeport (photo)
+2 Envoyer une photo du passeport
+3 Saisie manuelle"""
+        else:
+            msg = """How would you like to provide the passenger's information?
+
+1 Scan passport (photo)
+2 Send a photo of the passport
+3 Manual entry"""
+        target_state = ConversationState.ENROLLING_THIRD_PARTY_METHOD
+    else:
+        if lang == "fr":
+            msg = """Comment souhaitez-vous renseigner vos informations ?
+
+1 Scanner mon passeport (photo)
+2 Envoyer une photo de mon passeport
+3 Saisie manuelle"""
+        else:
+            msg = """How would you like to provide your information?
+
+1 Scan my passport (photo)
+2 Send a photo of my passport
+3 Manual entry"""
+        target_state = ConversationState.ENROLLMENT_METHOD
+    await update_session(phone, {"state": target_state})
+    await send_whatsapp_message(phone, msg)
+
+
 async def handle_enrollment_method_selection(phone: str, text: str, session: Dict, lang: str, is_tp: bool = False):
     if text in ["1", "2"]:
         if lang == "fr":

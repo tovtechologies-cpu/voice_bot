@@ -1,12 +1,13 @@
-"""Modification conversation handlers."""
+"""Modification conversation handlers — cancels original booking when rebooking."""
 import logging
 from typing import Dict
-from models import ConversationState
+from datetime import datetime, timezone
+from models import ConversationState, calculate_refund
 from services.session import update_session, clear_session
 from services.whatsapp import send_whatsapp_message
 from services.airport import get_city_name
 from database import db
-from conversation.cancellation import start_cancellation_flow
+from conversation.cancellation import start_cancellation_flow, process_refund
 
 logger = logging.getLogger("ModificationHandler")
 
@@ -64,20 +65,24 @@ async def handle_modification_requested(phone: str, text: str, session: Dict, la
     change_penalty = booking.get("change_penalty_eur", 0) or 0
     if lang == "fr":
         msg = f"""Billet modifiable.
-Penalite : {change_penalty}EUR
+Penalite de modification : {change_penalty}EUR
 
-Que modifier ?
+Que souhaitez-vous modifier ?
 1 Date de depart
-2 Date de retour
-3 Annuler plutot"""
+2 Annuler plutot
+
+L'ancienne reservation sera annulee et une nouvelle sera creee.
+La penalite de {change_penalty}EUR sera appliquee."""
     else:
         msg = f"""Ticket modifiable.
-Penalty: {change_penalty}EUR
+Modification penalty: {change_penalty}EUR
 
-What to change?
+What would you like to change?
 1 Departure date
-2 Return date
-3 Cancel instead"""
+2 Cancel instead
+
+The original booking will be cancelled and a new one created.
+A penalty of {change_penalty}EUR will apply."""
     await update_session(phone, {"state": ConversationState.MODIFICATION_CONFIRM, "_mod_booking_ref": booking_ref, "_mod_allowed": True, "_mod_penalty": change_penalty})
     await send_whatsapp_message(phone, msg)
 
@@ -94,22 +99,67 @@ async def handle_modification_confirm(phone: str, text: str, session: Dict, lang
         msg = "Reservation conservee." if lang == "fr" else "Booking kept."
         await send_whatsapp_message(phone, msg)
         return
-    if text == "3":
+    if text == "2":
         await update_session(phone, {"state": ConversationState.IDLE})
         await start_cancellation_flow(phone, lang)
         return
-    if text in ["1", "2"]:
-        change_type = "departure" if text == "1" else "return"
-        if lang == "fr":
-            msg = f"Quelle nouvelle date de {'depart' if text == '1' else 'retour'} ?"
-        else:
-            msg = f"What new {'departure' if text == '1' else 'return'} date?"
-        await update_session(phone, {"state": ConversationState.AWAITING_DATE, "_mod_change_type": change_type, "_mod_booking_ref": booking_ref, "intent": {}})
+    if text == "1":
+        # Cancel the original booking first
         booking = await db.bookings.find_one({"booking_ref": booking_ref}, {"_id": 0})
         if booking:
-            penalty = session.get("_mod_penalty", 0)
-            await update_session(phone, {"intent": {"origin": booking.get("origin"), "destination": booking.get("destination")}, "_mod_old_price": booking.get("price_eur"), "_mod_penalty": penalty})
-        await send_whatsapp_message(phone, msg)
+            now_utc = datetime.now(timezone.utc)
+            await db.bookings.update_one(
+                {"booking_ref": booking_ref},
+                {"$set": {
+                    "status": "modified_cancelled",
+                    "cancellation_timestamp": now_utc.isoformat(),
+                    "modification_note": "Cancelled for modification — new booking pending"
+                }}
+            )
+            await db.cancelled_bookings.insert_one({
+                "booking_ref": booking_ref,
+                "cancelled_at": now_utc.isoformat(),
+                "reason": "modification"
+            })
+
+            # Process refund for original booking (minus change penalty)
+            refund_info = calculate_refund(booking)
+            change_penalty = session.get("_mod_penalty", 0)
+            refund_amount = max(0, refund_info.get("refund_eur", 0) - change_penalty)
+
+            if refund_amount > 0:
+                refund_result = await process_refund(booking, refund_amount)
+                if refund_result.get("success"):
+                    await db.bookings.update_one(
+                        {"booking_ref": booking_ref},
+                        {"$set": {"refund_status": "PROCESSED", "refund_amount_eur": refund_amount, "refund_reference": refund_result.get("reference", "")}}
+                    )
+
+            if lang == "fr":
+                msg = f"Reservation {booking_ref} annulee pour modification.\nRecherchons de nouveaux vols..."
+            else:
+                msg = f"Booking {booking_ref} cancelled for modification.\nSearching for new flights..."
+            await send_whatsapp_message(phone, msg)
+
+            # Enter new booking flow with same route
+            await update_session(phone, {
+                "state": ConversationState.AWAITING_DATE,
+                "intent": {
+                    "origin": booking.get("origin"),
+                    "destination": booking.get("destination")
+                },
+                "_mod_original_ref": booking_ref,
+                "_mod_penalty": change_penalty
+            })
+            if lang == "fr":
+                msg = f"Quelle nouvelle date de depart pour {get_city_name(booking.get('origin', ''))} -> {get_city_name(booking.get('destination', ''))} ?"
+            else:
+                msg = f"What new departure date for {get_city_name(booking.get('origin', ''))} -> {get_city_name(booking.get('destination', ''))}?"
+            await send_whatsapp_message(phone, msg)
+        else:
+            await clear_session(phone)
+            msg = "Reservation non trouvee." if lang == "fr" else "Booking not found."
+            await send_whatsapp_message(phone, msg)
         return
-    msg = "Repondez 1, 2 ou 3" if lang == "fr" else "Reply 1, 2, or 3"
+    msg = "Repondez 1 ou 2" if lang == "fr" else "Reply 1 or 2"
     await send_whatsapp_message(phone, msg)

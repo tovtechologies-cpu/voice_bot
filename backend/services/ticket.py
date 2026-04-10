@@ -23,7 +23,7 @@ def generate_ticket_pdf(booking: Dict) -> str:
     filename = f"travelio_ticket_{booking_ref}.pdf"
     filepath = TICKETS_DIR / filename
 
-    qr_data = json.dumps({"ref": booking_ref, "passenger": booking.get('passenger_name', 'N/A'), "passport": booking.get('passenger_passport', 'N/A'), "route": f"{booking.get('origin')} -> {booking.get('destination')}", "date": booking.get('departure_date'), "price": f"{booking.get('price_eur')}EUR"})
+    qr_data = json.dumps({"ref": booking_ref, "passenger": booking.get('passenger_name', 'N/A'), "route": f"{booking.get('origin')} -> {booking.get('destination')}", "date": booking.get('departure_date'), "verify": f"/api/verify_qr/{booking_ref}"})
     qr = qrcode.QRCode(version=1, box_size=10, border=2)
     qr.add_data(qr_data)
     qr.make(fit=True)

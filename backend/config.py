@@ -17,6 +17,7 @@ CORS_ORIGINS = os.environ.get('CORS_ORIGINS', '*')
 WHATSAPP_PHONE_ID = os.environ.get('WHATSAPP_PHONE_ID', '')
 WHATSAPP_TOKEN = os.environ.get('WHATSAPP_TOKEN', '')
 WHATSAPP_VERIFY_TOKEN = os.environ.get('WHATSAPP_VERIFY_TOKEN', 'travelio_verify_2024')
+WHATSAPP_WEBHOOK_SECRET = os.environ.get('WHATSAPP_WEBHOOK_SECRET', '')
 
 # AI
 EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
@@ -25,8 +26,21 @@ EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
 DUFFEL_API_KEY = os.environ.get('DUFFEL_API_KEY', '')
 DUFFEL_ENV = os.environ.get('DUFFEL_ENV', 'sandbox')
 
+def get_duffel_mode() -> str:
+    """Detect Duffel mode: PRODUCTION, SANDBOX, or MOCK."""
+    if DUFFEL_API_KEY.startswith("duffel_live_"):
+        return "PRODUCTION"
+    elif DUFFEL_API_KEY.startswith("duffel_test_"):
+        return "SANDBOX"
+    elif DUFFEL_API_KEY and 'placeholder' not in DUFFEL_API_KEY and DUFFEL_ENV == 'production':
+        return "PRODUCTION"
+    elif DUFFEL_API_KEY and 'placeholder' not in DUFFEL_API_KEY:
+        return "SANDBOX"
+    else:
+        return "MOCK"
+
 def is_duffel_sandbox():
-    return 'placeholder' in DUFFEL_API_KEY or DUFFEL_ENV == 'sandbox'
+    return get_duffel_mode() != "PRODUCTION"
 
 # Stripe
 STRIPE_SECRET_KEY = os.environ.get('STRIPE_SECRET_KEY', '')
@@ -52,6 +66,34 @@ APPLE_PAY_DOMAIN = os.environ.get('APPLE_PAY_DOMAIN', '')
 
 # Security / Encryption
 ENCRYPTION_KEY = os.environ.get('ENCRYPTION_KEY', '')
+
+
+def get_momo_mode() -> str:
+    """Detect MTN MoMo mode: PRODUCTION, SANDBOX, or MOCK."""
+    has_keys = all([MOMO_SUBSCRIPTION_KEY, MOMO_API_USER, MOMO_API_KEY]) and MOMO_API_USER != 'your_uuid_here'
+    if not has_keys:
+        return "MOCK"
+    if MOMO_ENVIRONMENT == "production" and "proxy.momoapi.mtn.com" in MOMO_BASE_URL:
+        return "PRODUCTION"
+    return "SANDBOX"
+
+
+def get_moov_mode() -> str:
+    """Detect Moov Money mode: PRODUCTION or MOCK."""
+    if MOOV_API_KEY and MOOV_API_KEY != 'your_key_here':
+        return "PRODUCTION"
+    return "MOCK"
+
+
+def get_stripe_mode() -> str:
+    """Detect Stripe mode: LIVE, TEST, or MOCK."""
+    if STRIPE_SECRET_KEY.startswith("sk_live_"):
+        return "LIVE"
+    elif STRIPE_SECRET_KEY.startswith("sk_test_"):
+        return "TEST"
+    elif STRIPE_SECRET_KEY and STRIPE_SECRET_KEY != 'your_stripe_secret_key_here':
+        return "TEST"
+    return "MOCK"
 
 # Constants
 API_TIMEOUT = 10.0

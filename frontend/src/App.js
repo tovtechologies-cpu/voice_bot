@@ -5,7 +5,12 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const STATUS_CONFIG = {
   configured: { icon: "check-circle", color: "#00E5A0", bg: "rgba(0,229,160,0.08)", label: "Active" },
   sandbox: { icon: "flask", color: "#FBBF24", bg: "rgba(251,191,36,0.08)", label: "Sandbox" },
+  mock: { icon: "ghost", color: "#94A3B8", bg: "rgba(148,163,184,0.08)", label: "Mock" },
+  production: { icon: "check-circle", color: "#00E5A0", bg: "rgba(0,229,160,0.08)", label: "Production" },
+  live: { icon: "check-circle", color: "#00E5A0", bg: "rgba(0,229,160,0.08)", label: "Live" },
+  test: { icon: "flask", color: "#FBBF24", bg: "rgba(251,191,36,0.08)", label: "Test" },
   missing: { icon: "times-circle", color: "#FF4D6D", bg: "rgba(255,77,109,0.08)", label: "Missing" },
+  not_configured: { icon: "times-circle", color: "#FF4D6D", bg: "rgba(255,77,109,0.08)", label: "Not Configured" },
 };
 
 const OPERATOR_META = {
@@ -105,6 +110,7 @@ function App() {
 
   const operators = health?.payment_operators || {};
   const integrations = health?.integrations || {};
+  const webhookSecurity = health?.webhook_security || {};
 
   return (
     <div className="min-h-screen bg-[#060A14] text-white">
@@ -193,6 +199,40 @@ function App() {
               {Object.entries(integrations).map(([id, status]) => (
                 <IntegrationRow key={id} id={id} status={status} />
               ))}
+            </div>
+          </section>
+        )}
+
+        {/* Webhook Security */}
+        {!loading && health && (
+          <section
+            data-testid="webhook-security-section"
+            className="rounded-2xl p-5 border border-[rgba(255,255,255,0.06)]"
+            style={{ background: "#0F172A" }}
+          >
+            <h2 className="text-sm font-semibold text-[#94A3B8] uppercase tracking-wider mb-3">
+              Webhook Security
+            </h2>
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between py-1.5">
+                <span className="text-sm text-[#CBD5E1]">Signature Verification</span>
+                <span
+                  className="text-xs font-medium px-2 py-0.5 rounded-full"
+                  style={{
+                    color: webhookSecurity.signature_verification === "active" ? "#00E5A0" : "#FF4D6D",
+                    background: webhookSecurity.signature_verification === "active" ? "rgba(0,229,160,0.1)" : "rgba(255,77,109,0.1)"
+                  }}
+                >
+                  <i className={`fas fa-${webhookSecurity.signature_verification === "active" ? "shield-alt" : "exclamation-triangle"} mr-1`}></i>
+                  {webhookSecurity.signature_verification === "active" ? "Active" : "Disabled"}
+                </span>
+              </div>
+              {webhookSecurity.last_verified && (
+                <div className="flex items-center justify-between py-1.5">
+                  <span className="text-sm text-[#CBD5E1]">Last Verified</span>
+                  <span className="text-xs text-[#64748B]">{new Date(webhookSecurity.last_verified).toLocaleString()}</span>
+                </div>
+              )}
             </div>
           </section>
         )}

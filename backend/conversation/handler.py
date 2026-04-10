@@ -11,7 +11,7 @@ from conversation.enrollment import (
     handle_enrollment_method_selection, handle_manual_first_name, handle_manual_last_name,
     handle_manual_passport, handle_profile_confirmation, handle_passport_scan,
     handle_travel_purpose, handle_third_party_selection, handle_save_tp_prompt,
-    handle_passenger_count, handle_passenger_count_prompt
+    handle_passenger_count, handle_passenger_count_prompt, handle_consent
 )
 from conversation.booking import (
     handle_awaiting_destination, handle_awaiting_date, handle_flight_selection,
@@ -94,6 +94,11 @@ async def handle_message(phone: str, message_text: str, audio_id: str = None, im
     if text in ["start", "aide", "help", "menu"]:
         await clear_session(phone)
         await start_conversation(phone, lang)
+        return
+
+    # === CONSENT STATE ===
+    if state == ConversationState.AWAITING_CONSENT:
+        await handle_consent(phone, text, session, lang)
         return
 
     # === ENROLLMENT STATES ===
@@ -253,23 +258,37 @@ async def start_conversation(phone: str, lang: str):
 async def handle_new_user(phone: str, lang: str):
     if lang == "fr":
         msg = """Bienvenue sur Travelio !
-Avant de rechercher votre vol, j'ai besoin de votre nom pour le billet.
 
-Comment souhaitez-vous renseigner vos informations ?
+Avant de continuer, nous avons besoin de votre accord :
 
-1 Scanner mon passeport (photo)
-2 Envoyer une photo de mon passeport
-3 Saisie manuelle"""
+- Utiliser votre nom pour emettre votre billet
+- Stocker votre profil pour vos prochaines reservations (supprimable a tout moment)
+- Traiter votre paiement de facon securisee
+
+Vos donnees sont chiffrees (AES-256) et vous pouvez demander leur suppression a tout moment.
+
+Politique de confidentialite : /api/legal/privacy
+Conditions : /api/legal/terms
+
+*1* J'accepte, continuer
+*2* Non merci"""
     else:
         msg = """Welcome to Travelio!
-Before searching for your flight, I need your name for the ticket.
 
-How would you like to provide your information?
+Before we continue, we need your agreement to:
 
-1 Scan my passport (photo)
-2 Send a photo of my passport
-3 Manual entry"""
-    await update_session(phone, {"state": ConversationState.ENROLLMENT_METHOD, "enrolling_for": "self"})
+- Use your name to issue your ticket
+- Store your profile for future bookings (deletable anytime)
+- Process your payment securely
+
+Your data is encrypted (AES-256) and you can request deletion at any time.
+
+Privacy policy: /api/legal/privacy
+Terms: /api/legal/terms
+
+*1* I agree, continue
+*2* No thanks"""
+    await update_session(phone, {"state": ConversationState.AWAITING_CONSENT, "enrolling_for": "self"})
     await send_whatsapp_message(phone, msg)
 
 

@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 import httpx
 from config import (
-    DUFFEL_API_KEY, is_duffel_sandbox, API_TIMEOUT,
+    DUFFEL_API_KEY, is_duffel_sandbox, get_duffel_mode, API_TIMEOUT,
     EUR_TO_XOF, AIRLINES
 )
 
@@ -45,11 +45,16 @@ def _minutes_to_iso(minutes: int) -> str:
 
 
 async def search_flights(origin: str, destination: str, departure_date: str, adults: int = 1) -> List[Dict]:
-    """Search flights via Duffel API, falling back to mock in sandbox mode."""
-    if is_duffel_sandbox():
-        logger.info(f"[Duffel SANDBOX] Mock search: {origin}->{destination} on {departure_date}")
+    """Search flights via Duffel API, falling back to mock in sandbox/mock mode."""
+    mode = get_duffel_mode()
+    if mode == "MOCK":
+        logger.info(f"[Duffel MOCK] No key configured. Mock search: {origin}->{destination} on {departure_date}")
         return generate_mock_flights(origin, destination, departure_date, adults)
-
+    if mode == "SANDBOX":
+        logger.info(f"[Duffel SANDBOX] Test search: {origin}->{destination} on {departure_date}")
+        return await _search_duffel_flights(origin, destination, departure_date, adults)
+    # PRODUCTION
+    logger.info(f"[Duffel PRODUCTION] Live search: {origin}->{destination} on {departure_date}")
     return await _search_duffel_flights(origin, destination, departure_date, adults)
 
 

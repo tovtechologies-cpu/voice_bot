@@ -1,11 +1,35 @@
-"""WhatsApp webhook routes."""
+"""WhatsApp webhook routes with signature verification."""
+import hmac
+import hashlib
 import logging
+from datetime import datetime, timezone
 from fastapi import APIRouter, Request, Query, Response
 from conversation.handler import handle_message
-from config import WHATSAPP_VERIFY_TOKEN
+from config import WHATSAPP_VERIFY_TOKEN, WHATSAPP_WEBHOOK_SECRET
 
 router = APIRouter()
 logger = logging.getLogger("WebhookRoutes")
+
+# Track last verified timestamp for health check
+_last_verified_at = None
+
+
+def get_last_verified_at():
+    return _last_verified_at
+
+
+def verify_whatsapp_signature(payload_body: bytes, signature_header: str, secret: str) -> bool:
+    """Verify X-Hub-Signature-256 from WhatsApp Cloud API."""
+    if not secret:
+        return True  # Skip verification if secret not configured (dev mode)
+    if not signature_header:
+        return False
+    expected = 'sha256=' + hmac.new(
+        secret.encode('utf-8'),
+        payload_body,
+        hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(expected, signature_header)
 
 
 @router.get("/webhook")
@@ -21,8 +45,24 @@ async def verify_webhook(
 
 @router.post("/webhook")
 async def receive_webhook(request: Request):
+    global _last_verified_at
+
+    # Signature verification
+    payload_body = await request.body()
+    signature_header = request.headers.get("x-hub-signature-256", "")
+
+    if WHATSAPP_WEBHOOK_SECRET:
+        if not verify_whatsapp_signature(payload_body, signature_header, WHATSAPP_WEBHOOK_SECRET):
+            client_ip = request.client.host if request.client else "unknown"
+            masked_ip = client_ip[:client_ip.rfind(".")] + ".***" if "." in client_ip else client_ip
+            logger.warning(f"[WEBHOOK] Signature verification FAILED | ip={masked_ip} | timestamp={datetime.now(timezone.utc).isoformat()}")
+            return Response(content='{"error":"signature_verification_failed"}', status_code=403, media_type="application/json")
+        _last_verified_at = datetime.now(timezone.utc).isoformat()
+        logger.debug("[WEBHOOK] Signature verified")
+
     try:
-        data = await request.json()
+        import json
+        data = json.loads(payload_body)
     except Exception:
         return {"status": "invalid_json"}
 

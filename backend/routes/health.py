@@ -1,12 +1,13 @@
-"""Health and status routes."""
+"""Health and status routes with environment-aware mode detection."""
 import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter
 from database import db
 from config import (
-    WHATSAPP_PHONE_ID, WHATSAPP_TOKEN, EMERGENT_LLM_KEY,
-    DUFFEL_API_KEY, is_duffel_sandbox, STRIPE_SECRET_KEY,
-    MOMO_API_USER, MOOV_API_KEY
+    WHATSAPP_PHONE_ID, WHATSAPP_TOKEN, WHATSAPP_WEBHOOK_SECRET,
+    EMERGENT_LLM_KEY, DUFFEL_API_KEY, STRIPE_SECRET_KEY,
+    MOMO_API_USER, MOOV_API_KEY,
+    get_duffel_mode, get_momo_mode, get_moov_mode, get_stripe_mode
 )
 
 router = APIRouter()
@@ -22,16 +23,19 @@ async def health():
         db_status = "disconnected"
 
     wa_configured = WHATSAPP_PHONE_ID and WHATSAPP_TOKEN and WHATSAPP_PHONE_ID != 'your_phone_id_here'
-    stripe_configured = STRIPE_SECRET_KEY and STRIPE_SECRET_KEY != 'your_stripe_secret_key_here'
-    momo_configured = MOMO_API_USER and MOMO_API_USER != 'your_uuid_here'
-    moov_configured = MOOV_API_KEY and MOOV_API_KEY != 'your_key_here'
+    duffel_mode = get_duffel_mode()
+    momo_mode = get_momo_mode()
+    moov_mode = get_moov_mode()
+    stripe_mode = get_stripe_mode()
 
-    def _status(configured, label="configured"):
-        return {"status": label if configured else "missing"}
+    # Webhook security status
+    sig_active = bool(WHATSAPP_WEBHOOK_SECRET)
+    from routes.webhook import get_last_verified_at
+    last_verified = get_last_verified_at()
 
     return {
         "status": "healthy" if db_status == "connected" else "degraded",
-        "version": "7.0",
+        "version": "7.1",
         "type": "WhatsApp Agent",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "services": {
@@ -39,22 +43,32 @@ async def health():
             "whatsapp": "configured" if wa_configured else "not_configured",
             "claude_ai": "configured" if EMERGENT_LLM_KEY else "not_configured",
             "whisper": "configured" if EMERGENT_LLM_KEY else "not_configured",
-            "duffel": "sandbox" if is_duffel_sandbox() else ("configured" if DUFFEL_API_KEY else "not_configured"),
-            "stripe": "configured" if stripe_configured else "not_configured",
-            "mtn_momo": "configured" if momo_configured else "not_configured",
-            "moov_money": "configured" if moov_configured else "not_configured",
+            "duffel": duffel_mode.lower(),
+            "stripe": stripe_mode.lower(),
+            "mtn_momo": momo_mode.lower(),
+            "moov_money": moov_mode.lower(),
         },
         "payment_operators": {
-            "mtn_momo": _status(momo_configured),
-            "moov_money": _status(moov_configured),
-            "google_pay": _status(stripe_configured),
-            "apple_pay": _status(stripe_configured),
+            "mtn_momo": {"status": momo_mode.lower(), "mode": momo_mode},
+            "moov_money": {"status": moov_mode.lower(), "mode": moov_mode},
+            "google_pay": {"status": stripe_mode.lower(), "mode": stripe_mode},
+            "apple_pay": {"status": stripe_mode.lower(), "mode": stripe_mode},
         },
         "integrations": {
             "claude_ai": "configured" if EMERGENT_LLM_KEY else "missing",
-            "duffel": "sandbox" if is_duffel_sandbox() else ("configured" if DUFFEL_API_KEY else "missing"),
+            "duffel": duffel_mode.lower(),
             "whatsapp": "configured" if wa_configured else "missing",
             "whisper": "configured" if EMERGENT_LLM_KEY else "missing",
+        },
+        "webhook_security": {
+            "signature_verification": "active" if sig_active else "disabled",
+            "last_verified": last_verified,
+        },
+        "environment_modes": {
+            "duffel": duffel_mode,
+            "mtn_momo": momo_mode,
+            "moov_money": moov_mode,
+            "stripe": stripe_mode,
         }
     }
 
@@ -63,7 +77,7 @@ async def health():
 async def root():
     return {
         "name": "Travelio WhatsApp Travel Agent",
-        "version": "7.0",
+        "version": "7.1",
         "description": "WhatsApp-based flight booking with Duffel GDS, AES-256 encryption, and smart airport recognition",
         "endpoints": {
             "webhook": "/api/webhook",
