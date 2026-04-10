@@ -10,121 +10,77 @@ function App() {
   useEffect(() => {
     fetch(`${BACKEND_URL}/api/health`)
       .then(res => res.json())
-      .then(data => {
-        setHealth(data);
-        setLoading(false);
-      })
-      .catch(err => {
-        console.error(err);
-        setLoading(false);
-      });
+      .then(data => { setHealth(data); setLoading(false); })
+      .catch(() => setLoading(false));
   }, []);
 
   return (
-    <div className="min-h-screen bg-[#0A0F1E] text-white flex flex-col items-center justify-center p-8">
-      <div className="max-w-2xl w-full">
+    <div className="min-h-screen bg-[#0A0F1E] text-white flex flex-col items-center justify-center p-6">
+      <div className="max-w-xl w-full space-y-6">
         {/* Logo */}
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold bg-gradient-to-r from-[#6C63FF] to-[#00D4FF] bg-clip-text text-transparent mb-2">
+        <div className="text-center">
+          <h1 className="text-4xl font-bold bg-gradient-to-r from-[#6C63FF] to-[#00D4FF] bg-clip-text text-transparent mb-1">
             ✈️ Travelio
           </h1>
-          <p className="text-[#94A3B8] text-lg">WhatsApp Travel Booking Agent</p>
+          <p className="text-[#94A3B8]">WhatsApp Travel Booking Agent v4.0</p>
         </div>
 
-        {/* Status Card */}
-        <div className="bg-[#111827] rounded-2xl p-6 border border-[rgba(255,255,255,0.08)] mb-6">
-          <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
+        {/* Status */}
+        <div className="bg-[#111827] rounded-xl p-5 border border-[rgba(255,255,255,0.08)]">
+          <div className="flex items-center gap-3 mb-3">
             <span className={`w-3 h-3 rounded-full ${health?.status === 'healthy' ? 'bg-[#00E5A0]' : 'bg-[#FF4D6D]'}`}></span>
-            Agent Status
-          </h2>
+            <span className="font-semibold">Agent Status</span>
+          </div>
           {loading ? (
             <p className="text-[#94A3B8]">Checking...</p>
           ) : health ? (
-            <div className="space-y-2 text-[#94A3B8]">
-              <p>✅ Backend: <span className="text-[#00E5A0]">Online</span></p>
-              <p>📱 Type: <span className="text-white">{health.type || 'WhatsApp Agent'}</span></p>
-              <p>🔄 Version: <span className="text-white">3.0.0</span></p>
-            </div>
+            <p className="text-[#00E5A0]">✅ Online • {health.version}</p>
           ) : (
-            <p className="text-[#FF4D6D]">❌ Backend offline</p>
+            <p className="text-[#FF4D6D]">❌ Offline</p>
           )}
         </div>
 
         {/* How it works */}
-        <div className="bg-[#111827] rounded-2xl p-6 border border-[rgba(255,255,255,0.08)] mb-6">
-          <h2 className="text-xl font-semibold mb-4">💬 How It Works</h2>
-          <p className="text-[#94A3B8] mb-4">
-            Travelio is a <span className="text-white">WhatsApp-only</span> travel booking agent. 
-            The entire journey happens inside your WhatsApp chat:
-          </p>
-          <ol className="space-y-3 text-[#94A3B8]">
-            <li className="flex gap-3">
-              <span className="text-[#6C63FF] font-bold">1.</span>
-              <span>Send a voice or text message with your travel plans</span>
-            </li>
-            <li className="flex gap-3">
-              <span className="text-[#6C63FF] font-bold">2.</span>
-              <span>AI parses your intent and searches for flights</span>
-            </li>
-            <li className="flex gap-3">
-              <span className="text-[#6C63FF] font-bold">3.</span>
-              <span>Choose from 3 flight options (ECO / FAST / PREMIUM)</span>
-            </li>
-            <li className="flex gap-3">
-              <span className="text-[#6C63FF] font-bold">4.</span>
-              <span>Pay instantly via MTN MoMo</span>
-            </li>
-            <li className="flex gap-3">
-              <span className="text-[#6C63FF] font-bold">5.</span>
-              <span>Receive your PDF ticket with QR code in the same chat</span>
-            </li>
+        <div className="bg-[#111827] rounded-xl p-5 border border-[rgba(255,255,255,0.08)]">
+          <h2 className="font-semibold mb-3">💬 Comment ça marche</h2>
+          <ol className="space-y-2 text-[#94A3B8] text-sm">
+            <li>1️⃣ Envoyez un message vocal ou texte avec vos plans de voyage</li>
+            <li>2️⃣ L'IA analyse et recherche les vols sur Amadeus</li>
+            <li>3️⃣ 3 options: 💚 PLUS BAS • ⚡ PLUS RAPIDE • 👑 PREMIUM</li>
+            <li>4️⃣ Répondez 1, 2 ou 3 pour sélectionner</li>
+            <li>5️⃣ Payez via MTN MoMo</li>
+            <li>6️⃣ Recevez votre billet PDF avec QR code</li>
           </ol>
         </div>
 
-        {/* Webhook Info */}
-        <div className="bg-[#111827] rounded-2xl p-6 border border-[rgba(255,255,255,0.08)] mb-6">
-          <h2 className="text-xl font-semibold mb-4">🔗 WhatsApp Webhook Setup</h2>
-          <div className="space-y-3">
-            <div>
-              <p className="text-[#94A3B8] text-sm mb-1">Webhook URL:</p>
-              <code className="block bg-[#0A0F1E] p-3 rounded-lg text-[#00D4FF] text-sm break-all">
-                {BACKEND_URL}/api/webhook
-              </code>
-            </div>
-            <div>
-              <p className="text-[#94A3B8] text-sm mb-1">Verify Token:</p>
-              <code className="block bg-[#0A0F1E] p-3 rounded-lg text-[#00D4FF] text-sm">
-                travelio_verify_2024
-              </code>
-            </div>
-            <p className="text-[#94A3B8] text-xs mt-2">
-              Configure these in your Meta Developer Console → WhatsApp → Configuration
-            </p>
-          </div>
+        {/* Pricing */}
+        <div className="bg-[#111827] rounded-xl p-5 border border-[rgba(255,255,255,0.08)]">
+          <h2 className="font-semibold mb-2">💰 Tarification Travelio</h2>
+          <p className="text-[#94A3B8] text-sm">
+            Prix final = Prix Amadeus + 15€ + 5%<br/>
+            Affiché en EUR et XOF (1€ = 655,957 XOF)
+          </p>
         </div>
 
-        {/* Destinations */}
-        <div className="bg-[#111827] rounded-2xl p-6 border border-[rgba(255,255,255,0.08)]">
-          <h2 className="text-xl font-semibold mb-4">🌍 Supported Destinations</h2>
-          <div className="grid grid-cols-2 gap-2 text-[#94A3B8]">
-            <span>🇸🇳 Dakar</span>
-            <span>🇳🇬 Lagos</span>
-            <span>🇬🇭 Accra</span>
-            <span>🇨🇮 Abidjan</span>
-            <span>🇧🇫 Ouagadougou</span>
-            <span>🇲🇱 Bamako</span>
-            <span>🇬🇳 Conakry</span>
-            <span>🇳🇪 Niamey</span>
-            <span>🇧🇯 Cotonou</span>
-            <span>🇹🇬 Lomé</span>
+        {/* Webhook */}
+        <div className="bg-[#111827] rounded-xl p-5 border border-[rgba(255,255,255,0.08)]">
+          <h2 className="font-semibold mb-3">🔗 WhatsApp Webhook</h2>
+          <div className="space-y-2 text-sm">
+            <div>
+              <span className="text-[#94A3B8]">URL:</span>
+              <code className="ml-2 text-[#00D4FF]">{BACKEND_URL}/api/webhook</code>
+            </div>
+            <div>
+              <span className="text-[#94A3B8]">Verify Token:</span>
+              <code className="ml-2 text-[#00D4FF]">travelio_verify_2024</code>
+            </div>
           </div>
         </div>
 
         {/* Footer */}
-        <div className="text-center mt-8 text-[#94A3B8] text-sm">
-          <p>Built for West African travelers 🌍</p>
-          <p className="mt-1">Voice-first • Bilingual (FR/EN) • MoMo payments</p>
-        </div>
+        <p className="text-center text-[#94A3B8] text-xs">
+          🌍 Amadeus • Claude AI • MTN MoMo • WhatsApp
+        </p>
       </div>
     </div>
   );

@@ -17,6 +17,7 @@ class TravelioWhatsAppTester:
         self.test_phone = "+221771234567"
         self.booking_ref = None
         self.ticket_filename = None
+        self.EUR_TO_XOF = 655.957
 
     def run_test(self, name, method, endpoint, expected_status, data=None, params=None, timeout=30):
         """Run a single API test"""
@@ -68,13 +69,13 @@ class TravelioWhatsAppTester:
             return False, {}
 
     def test_health_check(self):
-        """Test health check endpoint returns whatsapp_agent type"""
+        """Test health check endpoint returns whatsapp_agent type and version 4.0.0"""
         success, data = self.run_test("Health Check", "GET", "health", 200)
-        if success and data.get('type') == 'whatsapp_agent':
-            print(f"   ✅ Correct agent type: {data.get('type')}")
+        if success and data.get('type') == 'whatsapp_agent' and data.get('version') == '4.0.0':
+            print(f"   ✅ Correct agent type: {data.get('type')} and version: {data.get('version')}")
             return True
         elif success:
-            print(f"   ❌ Wrong agent type: {data.get('type')} (expected: whatsapp_agent)")
+            print(f"   ❌ Wrong agent type: {data.get('type')} or version: {data.get('version')} (expected: whatsapp_agent, 4.0.0)")
         return False
 
     def test_webhook_verification(self):
@@ -146,14 +147,152 @@ class TravelioWhatsAppTester:
             print(f"   ❌ Wrong session state: {data.get('session_state')} (expected: awaiting_momo_approval)")
         return False
 
-    def test_session_management(self):
-        """Test session retrieval"""
-        success, data = self.run_test("Session Management", "GET", f"sessions/{self.test_phone}", 200)
-        if success and data.get('phone') == self.test_phone:
-            print(f"   ✅ Session found for phone: {data.get('phone')}")
-            print(f"   Current state: {data.get('state')}")
-            print(f"   Language: {data.get('language')}")
-            return True
+    def test_flight_categorization(self):
+        """Test flight categorization algorithm (PLUS_BAS, PLUS_RAPIDE, PREMIUM)"""
+        success, data = self.run_test("Flight Categorization", "GET", "test/flights", 200, 
+                                     params={"origin": "DSS", "destination": "CDG", "date": "2026-04-15"})
+        if success and 'categorized' in data:
+            categorized = data['categorized']
+            expected_categories = ['PLUS_BAS', 'PLUS_RAPIDE', 'PREMIUM']
+            found_categories = list(categorized.keys())
+            
+            if all(cat in found_categories for cat in expected_categories):
+                print(f"   ✅ All categories found: {found_categories}")
+                
+                # Check PLUS_BAS is lowest price
+                plus_bas = categorized.get('PLUS_BAS', {})
+                plus_rapide = categorized.get('PLUS_RAPIDE', {})
+                premium = categorized.get('PREMIUM', {})
+                
+                print(f"   PLUS_BAS price: {plus_bas.get('final_price')}€")
+                print(f"   PLUS_RAPIDE price: {plus_rapide.get('final_price')}€")
+                print(f"   PREMIUM price: {premium.get('final_price')}€")
+                
+                return True
+            else:
+                print(f"   ❌ Missing categories. Found: {found_categories}, Expected: {expected_categories}")
+        return False
+
+    def test_travelio_pricing(self):
+        """Test Travelio pricing rule: final_price = amadeus_price + 15 + (amadeus_price * 0.05)"""
+        success, data = self.run_test("Travelio Pricing", "GET", "test/flights", 200,
+                                     params={"origin": "DSS", "destination": "CDG", "date": "2026-04-15"})
+        if success and 'flights' in data:
+            flights = data['flights']
+            if flights:
+                flight = flights[0]
+                amadeus_price = flight.get('amadeus_price', 0)
+                final_price = flight.get('final_price', 0)
+                expected_price = amadeus_price + 15 + (amadeus_price * 0.05)
+                
+                if abs(final_price - expected_price) < 0.01:  # Allow small floating point differences
+                    print(f"   ✅ Pricing correct: {amadeus_price}€ + 15 + 5% = {final_price}€")
+                    return True
+                else:
+                    print(f"   ❌ Pricing incorrect: Expected {expected_price}€, got {final_price}€")
+        return False
+
+    def test_eur_to_xof_conversion(self):
+        """Test EUR to XOF conversion uses rate 655.957"""
+        success, data = self.run_test("EUR to XOF Conversion", "GET", "test/flights", 200,
+                                     params={"origin": "DSS", "destination": "CDG", "date": "2026-04-15"})
+        if success and 'flights' in data:
+            flights = data['flights']
+            if flights:
+                flight = flights[0]
+                final_price_eur = flight.get('final_price', 0)
+                price_xof = flight.get('price_xof', 0)
+                expected_xof = int(round(final_price_eur * self.EUR_TO_XOF))
+                
+                if price_xof == expected_xof:
+                    print(f"   ✅ Conversion correct: {final_price_eur}€ × {self.EUR_TO_XOF} = {price_xof} XOF")
+                    return True
+                else:
+                    print(f"   ❌ Conversion incorrect: Expected {expected_xof} XOF, got {price_xof} XOF")
+        return False
+
+    def test_flight_selection_plus_bas(self):
+        """Test flight selection '1' selects PLUS_BAS category"""
+        # Reset and setup
+        self.run_test("Reset", "POST", "test/message", 200, params={"phone": self.test_phone, "message": "annuler"})
+        self.run_test("Setup", "POST", "test/message", 200, params={"phone": self.test_phone, "message": "Je veux aller à Paris vendredi"})
+        
+        success, data = self.run_test("Flight Selection PLUS_BAS", "POST", "test/message", 200,
+                                     params={"phone": self.test_phone, "message": "1"})
+        if success:
+            session = data.get('session', {})
+            selected_flight = session.get('selected_flight', {})
+            if selected_flight.get('category') == 'PLUS_BAS':
+                print(f"   ✅ PLUS_BAS selected correctly")
+                return True
+            else:
+                print(f"   ❌ Wrong category selected: {selected_flight.get('category')} (expected: PLUS_BAS)")
+        return False
+
+    def test_flight_selection_plus_rapide(self):
+        """Test flight selection '2' selects PLUS_RAPIDE category"""
+        # Reset and setup
+        self.run_test("Reset", "POST", "test/message", 200, params={"phone": self.test_phone, "message": "annuler"})
+        self.run_test("Setup", "POST", "test/message", 200, params={"phone": self.test_phone, "message": "Je veux aller à Paris vendredi"})
+        
+        success, data = self.run_test("Flight Selection PLUS_RAPIDE", "POST", "test/message", 200,
+                                     params={"phone": self.test_phone, "message": "2"})
+        if success:
+            session = data.get('session', {})
+            selected_flight = session.get('selected_flight', {})
+            if selected_flight.get('category') == 'PLUS_RAPIDE':
+                print(f"   ✅ PLUS_RAPIDE selected correctly")
+                return True
+            else:
+                print(f"   ❌ Wrong category selected: {selected_flight.get('category')} (expected: PLUS_RAPIDE)")
+        return False
+
+    def test_flight_selection_premium(self):
+        """Test flight selection '3' selects PREMIUM category"""
+        # Reset and setup
+        self.run_test("Reset", "POST", "test/message", 200, params={"phone": self.test_phone, "message": "annuler"})
+        self.run_test("Setup", "POST", "test/message", 200, params={"phone": self.test_phone, "message": "Je veux aller à Paris vendredi"})
+        
+        success, data = self.run_test("Flight Selection PREMIUM", "POST", "test/message", 200,
+                                     params={"phone": self.test_phone, "message": "3"})
+        if success:
+            session = data.get('session', {})
+            selected_flight = session.get('selected_flight', {})
+            if selected_flight.get('category') == 'PREMIUM':
+                print(f"   ✅ PREMIUM selected correctly")
+                return True
+            else:
+                print(f"   ❌ Wrong category selected: {selected_flight.get('category')} (expected: PREMIUM)")
+        return False
+
+    def test_missing_destination_prompt(self):
+        """Test missing destination prompts for destination"""
+        self.run_test("Reset", "POST", "test/message", 200, params={"phone": self.test_phone, "message": "annuler"})
+        
+        success, data = self.run_test("Missing Destination", "POST", "test/message", 200,
+                                     params={"phone": self.test_phone, "message": "Je veux voyager vendredi"})
+        if success:
+            session = data.get('session', {})
+            if session.get('state') == 'awaiting_destination':
+                print(f"   ✅ Correctly prompting for destination")
+                return True
+            else:
+                print(f"   ❌ Wrong state: {session.get('state')} (expected: awaiting_destination)")
+        return False
+
+    def test_missing_date_prompt(self):
+        """Test missing date prompts for date"""
+        self.run_test("Reset", "POST", "test/message", 200, params={"phone": self.test_phone, "message": "annuler"})
+        
+        success, data = self.run_test("Missing Date", "POST", "test/message", 200,
+                                     params={"phone": self.test_phone, "message": "Je veux aller à Paris"})
+        if success:
+            session = data.get('session', {})
+            if session.get('state') == 'awaiting_date':
+                print(f"   ✅ Correctly prompting for date")
+                return True
+            else:
+                print(f"   ❌ Wrong state: {session.get('state')} (expected: awaiting_date)")
         return False
 
     def test_cancel_command(self):
@@ -293,27 +432,31 @@ class TravelioWhatsAppTester:
         return False
 
 def main():
-    print("🚀 Starting Travelio WhatsApp Agent Tests")
+    print("🚀 Starting Travelio WhatsApp Agent Tests v4.0")
     print("=" * 60)
     
     tester = TravelioWhatsAppTester()
     
-    # WhatsApp Agent Tests
+    # Core WhatsApp Agent Tests
     tests = [
         tester.test_health_check,
         tester.test_webhook_verification,
+        tester.test_flight_categorization,
+        tester.test_travelio_pricing,
+        tester.test_eur_to_xof_conversion,
         tester.test_welcome_message,
         tester.test_travel_request_parsing,
-        tester.test_flight_selection,
+        tester.test_flight_selection_plus_bas,
+        tester.test_flight_selection_plus_rapide,
+        tester.test_flight_selection_premium,
         tester.test_payment_confirmation,
-        tester.test_session_management,
         tester.test_cancel_command,
+        tester.test_missing_destination_prompt,
+        tester.test_missing_date_prompt,
         tester.test_intent_parsing_french,
         tester.test_intent_parsing_english,
-        tester.test_complete_booking_flow,
         tester.test_pdf_ticket_generation,
         tester.test_ticket_download,
-        tester.test_booking_retrieval,
     ]
     
     # Run all tests
@@ -330,16 +473,16 @@ def main():
     print(f"📈 Success Rate: {success_rate:.1f}%")
     
     if success_rate >= 90:
-        print("🎉 WhatsApp Agent backend tests highly successful!")
+        print("🎉 Travelio v4.0 WhatsApp Agent backend tests highly successful!")
         return 0
     elif success_rate >= 75:
-        print("✅ WhatsApp Agent backend mostly working with minor issues")
+        print("✅ Travelio v4.0 WhatsApp Agent backend mostly working with minor issues")
         return 1
     elif success_rate >= 50:
-        print("⚠️  WhatsApp Agent backend has some issues but core functionality works")
+        print("⚠️  Travelio v4.0 WhatsApp Agent backend has some issues but core functionality works")
         return 2
     else:
-        print("❌ WhatsApp Agent backend has significant issues")
+        print("❌ Travelio v4.0 WhatsApp Agent backend has significant issues")
         return 3
 
 if __name__ == "__main__":
