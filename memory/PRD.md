@@ -1,79 +1,83 @@
-# Travelio PRD - Voice-First Travel Booking App
+# Travelio PRD - WhatsApp Travel Booking Agent
 
 ## Original Problem Statement
-Build a voice-first travel booking web app called Travelio for West African users. User speaks one sentence about travel plans and the app handles: AI intent parsing, flight search, selection, payment, and ticket delivery.
+Build Travelio as a **WhatsApp-only conversational agent** for West African travelers.
+The entire user journey happens inside WhatsApp - NO browser interface.
 
-## Architecture
-- **Frontend**: React with Tailwind CSS, Shadcn UI components
-- **Backend**: FastAPI with MongoDB
-- **AI**: Claude Sonnet 4.5 via emergentintegrations (intent parsing)
-- **Integrations**: All mocked (MTN MoMo, Google Pay, Apple Pay, WhatsApp, AviationStack)
+## Architecture v3.0
+- **Backend**: FastAPI webhook receiver
+- **AI**: Claude Sonnet 4.5 via emergentintegrations
+- **Flights**: AviationStack API (fallback to mock)
+- **Payments**: MTN MoMo Sandbox (fallback to simulation)
+- **Tickets**: PDF with QR code via reportlab
+- **Interface**: WhatsApp Cloud API (sole interface)
 
-## User Personas
-1. **Frequent Traveler (Amadou)**: Business traveler in Dakar who needs quick booking in French
-2. **Diaspora Visitor (Marie)**: English-speaking user visiting family in West Africa
-3. **First-time User (Oumar)**: Low-tech comfort, needs simple voice interface
+## User Flow (All in WhatsApp)
+1. User sends voice/text message to WhatsApp number
+2. AI parses travel intent (destination, dates, budget, passengers)
+3. Agent replies with 3 flight options (ECO/FAST/PREMIUM)
+4. User replies "1", "2", or "3" to select
+5. Agent asks for payment confirmation
+6. User replies "OUI" / "YES"
+7. MoMo payment initiated, user approves on phone
+8. Agent sends confirmation + PDF ticket in same chat
 
-## Core Requirements (Static)
-- Voice input via Web Speech API
-- Bilingual UI (French default, English)
-- AI intent parsing for travel details
-- 3 flight options (ECO/FAST/PREMIUM)
-- Payment via MTN MoMo (primary), Google Pay, Apple Pay
-- PDF ticket with QR code
-- WhatsApp ticket delivery
-- User profile (manual + JSON upload)
-- Booking history
-- Mobile-first responsive design
+## Conversation States
+- `idle` - Waiting for travel request
+- `awaiting_flight_selection` - Showing flight options
+- `awaiting_payment_confirmation` - Asking to confirm booking
+- `awaiting_momo_approval` - Waiting for MoMo payment
 
 ## What's Been Implemented
-### January 2026
-- [x] Full-stack app setup (React + FastAPI + MongoDB)
-- [x] Voice input with Web Speech API
-- [x] Bilingual UI (FR/EN) with language toggle
-- [x] AI intent parsing with Claude Sonnet 4.5
-- [x] Intent badges (only show when values assigned)
+### April 2026
+- [x] WhatsApp webhook receiver (GET verify + POST messages)
+- [x] Session management (MongoDB)
+- [x] Claude Sonnet 4.5 intent parsing
 - [x] Mock flight search with 3 tiers
-- [x] Payment modal with MoMo/GPay/APay
-- [x] Booking confirmation with QR code
-- [x] WhatsApp ticket delivery (simulated)
-- [x] User profile page with JSON upload
-- [x] Booking history page
-- [x] Bottom navigation (mobile-first)
-- [x] Premium dark theme with glassmorphism
+- [x] MTN MoMo payment initiation + polling
+- [x] PDF ticket generation with QR code
+- [x] WhatsApp message sending (text + document)
+- [x] Bilingual support (French default, English)
+- [x] Graceful fallbacks for all integrations
+- [x] Status page showing webhook setup info
 
 ## P0 Features (Critical)
-- [x] Voice/text travel intent input
-- [x] AI-powered intent parsing
+- [x] Receive WhatsApp messages via webhook
+- [x] AI intent parsing
 - [x] Flight search and display
-- [x] Payment processing
-- [x] Booking confirmation
+- [x] MoMo payment flow
+- [x] PDF ticket generation
+- [x] Send ticket via WhatsApp
 
-## P1 Features (High Priority)
-- [x] Bilingual support
-- [x] User profiles
-- [x] Booking history
-- [ ] Real flight API integration (AviationStack)
-- [ ] Real MTN MoMo integration
+## P1 Features (Next)
+- [ ] Voice message transcription (Whisper API)
+- [ ] Real AviationStack integration
+- [ ] Real MoMo integration
+- [ ] Real WhatsApp Cloud API connection
+- [ ] Passenger name collection
 
-## P2 Features (Nice to Have)
-- [ ] Real WhatsApp Cloud API integration
-- [ ] PDF ticket generation with actual QR code
-- [ ] Push notifications
-- [ ] Offline mode
+## P2 Features (Future)
 - [ ] Multi-passenger booking
+- [ ] Return flights in same booking
+- [ ] Trip reminders
+- [ ] Booking modification
+- [ ] Refund handling
 
-## Prioritized Backlog
-1. Real AviationStack API integration
-2. Real MTN MoMo Sandbox integration
-3. Real WhatsApp Cloud API integration
-4. Actual PDF generation with QR code
-5. Email ticket delivery option
-6. Calendar integration for trip reminders
+## Environment Variables
+```
+EMERGENT_LLM_KEY=      # Claude Sonnet 4.5
+AVIATIONSTACK_API_KEY= # Live flight data
+MOMO_SUBSCRIPTION_KEY= # MoMo payments
+MOMO_API_USER=
+MOMO_API_KEY=
+WHATSAPP_PHONE_ID=     # WhatsApp Cloud API
+WHATSAPP_TOKEN=
+WHATSAPP_VERIFY_TOKEN=travelio_verify_2024
+```
 
-## Next Tasks List
-1. Integrate real flight APIs when keys provided
-2. Connect MTN MoMo Sandbox when credentials available
-3. Add actual PDF generation library (jsPDF)
-4. Implement real WhatsApp messaging
-5. Add trip notifications/reminders
+## Next Steps
+1. Configure WhatsApp Cloud API in Meta Developer Console
+2. Set webhook URL: https://your-app/api/webhook
+3. Get AviationStack API key for live flights
+4. Set up MoMo Sandbox for real payments
+5. Add voice message transcription support

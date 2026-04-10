@@ -3,21 +3,24 @@
 import requests
 import sys
 import json
+import time
+import os
 from datetime import datetime, timedelta
 import uuid
 
-class TravelioAPITester:
+class TravelioWhatsAppTester:
     def __init__(self, base_url="https://voice-travel-booking.preview.emergentagent.com"):
         self.base_url = base_url
         self.api_url = f"{base_url}/api"
         self.tests_run = 0
         self.tests_passed = 0
-        self.user_id = None
-        self.booking_id = None
+        self.test_phone = "+221771234567"
+        self.booking_ref = None
+        self.ticket_filename = None
 
-    def run_test(self, name, method, endpoint, expected_status, data=None, timeout=30):
+    def run_test(self, name, method, endpoint, expected_status, data=None, params=None, timeout=30):
         """Run a single API test"""
-        url = f"{self.api_url}/{endpoint}"
+        url = f"{self.api_url}/{endpoint}" if not endpoint.startswith('http') else endpoint
         headers = {'Content-Type': 'application/json'}
 
         self.tests_run += 1
@@ -26,9 +29,9 @@ class TravelioAPITester:
         
         try:
             if method == 'GET':
-                response = requests.get(url, headers=headers, timeout=timeout)
+                response = requests.get(url, headers=headers, params=params, timeout=timeout)
             elif method == 'POST':
-                response = requests.post(url, json=data, headers=headers, timeout=timeout)
+                response = requests.post(url, json=data, params=params, headers=headers, timeout=timeout)
             elif method == 'PUT':
                 response = requests.put(url, json=data, headers=headers, timeout=timeout)
             elif method == 'DELETE':
@@ -39,9 +42,13 @@ class TravelioAPITester:
                 self.tests_passed += 1
                 print(f"✅ Passed - Status: {response.status_code}")
                 try:
-                    response_data = response.json()
-                    print(f"   Response: {json.dumps(response_data, indent=2)[:200]}...")
-                    return True, response_data
+                    if response.headers.get('content-type', '').startswith('application/json'):
+                        response_data = response.json()
+                        print(f"   Response: {json.dumps(response_data, indent=2)[:300]}...")
+                        return True, response_data
+                    else:
+                        print(f"   Response: {response.text[:200]}...")
+                        return True, response.text
                 except:
                     return True, {}
             else:
@@ -61,285 +68,252 @@ class TravelioAPITester:
             return False, {}
 
     def test_health_check(self):
-        """Test health check endpoint"""
-        return self.run_test("Health Check", "GET", "health", 200)
+        """Test health check endpoint returns whatsapp_agent type"""
+        success, data = self.run_test("Health Check", "GET", "health", 200)
+        if success and data.get('type') == 'whatsapp_agent':
+            print(f"   ✅ Correct agent type: {data.get('type')}")
+            return True
+        elif success:
+            print(f"   ❌ Wrong agent type: {data.get('type')} (expected: whatsapp_agent)")
+        return False
 
-    def test_cities_endpoint(self):
-        """Test cities endpoint"""
-        success, data = self.run_test("Cities List", "GET", "cities", 200)
-        if success and isinstance(data, list) and len(data) > 0:
-            print(f"   Found {len(data)} cities")
+    def test_webhook_verification(self):
+        """Test WhatsApp webhook verification"""
+        params = {
+            'hub.mode': 'subscribe',
+            'hub.verify_token': 'travelio_verify_2024',
+            'hub.challenge': '12345'
+        }
+        success, data = self.run_test("Webhook Verification", "GET", "webhook", 200, params=params)
+        if success and str(data).strip() == '12345':
+            print(f"   ✅ Challenge returned correctly: {data}")
+            return True
+        elif success:
+            print(f"   ❌ Wrong challenge response: {data} (expected: 12345)")
+        return False
+
+    def test_welcome_message(self):
+        """Test welcome message with 'bonjour' command"""
+        params = {
+            "phone": self.test_phone,
+            "message": "bonjour"
+        }
+        success, data = self.run_test("Welcome Message", "POST", "test/message", 200, params=params)
+        if success and data.get('session_state') == 'idle':
+            print(f"   ✅ Session state: {data.get('session_state')}")
             return True
         return False
 
-    def test_parse_intent_english(self):
-        """Test intent parsing in English"""
-        test_data = {
-            "text": "I want to fly from Dakar to Lagos next Friday for $200",
-            "language": "en"
+    def test_travel_request_parsing(self):
+        """Test travel request processing and intent parsing"""
+        params = {
+            "phone": self.test_phone,
+            "message": "Je veux aller à Lagos vendredi prochain"
         }
-        success, data = self.run_test("Parse Intent (English)", "POST", "parse-intent", 200, test_data, timeout=45)
-        if success:
-            print(f"   Parsed destination: {data.get('destination')}")
-            print(f"   Parsed budget: {data.get('budget')}")
+        success, data = self.run_test("Travel Request Processing", "POST", "test/message", 200, params=params)
+        if success and data.get('session_state') == 'awaiting_flight_selection':
+            print(f"   ✅ Session transitioned to: {data.get('session_state')}")
+            return True
+        elif success:
+            print(f"   ❌ Wrong session state: {data.get('session_state')} (expected: awaiting_flight_selection)")
+        return False
+
+    def test_flight_selection(self):
+        """Test flight selection with option '2'"""
+        params = {
+            "phone": self.test_phone,
+            "message": "2"
+        }
+        success, data = self.run_test("Flight Selection", "POST", "test/message", 200, params=params)
+        if success and data.get('session_state') == 'awaiting_payment_confirmation':
+            print(f"   ✅ Session transitioned to: {data.get('session_state')}")
+            return True
+        elif success:
+            print(f"   ❌ Wrong session state: {data.get('session_state')} (expected: awaiting_payment_confirmation)")
+        return False
+
+    def test_payment_confirmation(self):
+        """Test payment confirmation with 'oui'"""
+        params = {
+            "phone": self.test_phone,
+            "message": "oui"
+        }
+        success, data = self.run_test("Payment Confirmation", "POST", "test/message", 200, params=params)
+        if success and data.get('session_state') == 'awaiting_momo_approval':
+            print(f"   ✅ Session transitioned to: {data.get('session_state')}")
+            return True
+        elif success:
+            print(f"   ❌ Wrong session state: {data.get('session_state')} (expected: awaiting_momo_approval)")
+        return False
+
+    def test_session_management(self):
+        """Test session retrieval"""
+        success, data = self.run_test("Session Management", "GET", f"sessions/{self.test_phone}", 200)
+        if success and data.get('phone') == self.test_phone:
+            print(f"   ✅ Session found for phone: {data.get('phone')}")
+            print(f"   Current state: {data.get('state')}")
+            print(f"   Language: {data.get('language')}")
             return True
         return False
 
-    def test_parse_intent_french(self):
-        """Test intent parsing in French"""
-        test_data = {
-            "text": "Je veux aller de Dakar à Abidjan vendredi prochain avec un budget de 50000 XOF",
-            "language": "fr"
+    def test_cancel_command(self):
+        """Test cancel command resets session"""
+        params = {
+            "phone": self.test_phone,
+            "message": "annuler"
         }
-        success, data = self.run_test("Parse Intent (French)", "POST", "parse-intent", 200, test_data, timeout=45)
-        if success:
-            print(f"   Parsed destination: {data.get('destination')}")
-            print(f"   Parsed budget: {data.get('budget')}")
+        success, data = self.run_test("Cancel Command", "POST", "test/message", 200, params=params)
+        if success and data.get('session_state') == 'idle':
+            print(f"   ✅ Session reset to: {data.get('session_state')}")
+            return True
+        elif success:
+            print(f"   ❌ Session not reset: {data.get('session_state')} (expected: idle)")
+        return False
+
+    def test_intent_parsing_french(self):
+        """Test intent parsing for French message"""
+        # Reset session first
+        self.run_test("Reset for French test", "POST", "test/message", 200, params={"phone": self.test_phone, "message": "annuler"})
+        
+        params = {
+            "phone": self.test_phone,
+            "message": "Je veux aller à Abidjan demain avec un budget de 80000 francs"
+        }
+        success, data = self.run_test("Intent Parsing (French)", "POST", "test/message", 200, params=params)
+        if success and data.get('session_state') == 'awaiting_flight_selection':
+            print(f"   ✅ French intent parsed successfully")
             return True
         return False
 
-    def test_flight_search(self):
-        """Test flight search"""
-        tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-        test_data = {
-            "origin": "Dakar",
-            "destination": "Lagos",
-            "departure_date": tomorrow,
-            "passengers": 1,
-            "travel_class": "economy"
+    def test_intent_parsing_english(self):
+        """Test intent parsing for English message"""
+        # Reset session first
+        self.run_test("Reset for English test", "POST", "test/message", 200, params={"phone": self.test_phone, "message": "cancel"})
+        
+        params = {
+            "phone": self.test_phone,
+            "message": "I want to fly to Accra next week under $150"
         }
-        success, data = self.run_test("Flight Search", "POST", "flights/search", 200, test_data)
-        if success and isinstance(data, list) and len(data) == 3:
-            print(f"   Found {len(data)} flight options")
-            # Check if we have ECO, FAST, PREMIUM tiers
-            tiers = [flight.get('tier') for flight in data]
-            if 'ECO' in tiers and 'FAST' in tiers and 'PREMIUM' in tiers:
-                print("   ✅ All tier types present (ECO, FAST, PREMIUM)")
+        success, data = self.run_test("Intent Parsing (English)", "POST", "test/message", 200, params=params)
+        if success and data.get('session_state') == 'awaiting_flight_selection':
+            print(f"   ✅ English intent parsed successfully")
+            return True
+        return False
+
+    def test_complete_booking_flow(self):
+        """Test complete booking flow to generate PDF ticket"""
+        print("\n🔄 Testing Complete Booking Flow...")
+        
+        # Reset session
+        self.run_test("Reset session", "POST", "test/message", 200, params={"phone": self.test_phone, "message": "annuler"})
+        
+        # Step 1: Travel request
+        success1, _ = self.run_test("Step 1: Travel Request", "POST", "test/message", 200, 
+                                   params={"phone": self.test_phone, "message": "Je veux aller à Lagos vendredi"})
+        
+        if not success1:
+            return False
+            
+        # Step 2: Flight selection
+        success2, _ = self.run_test("Step 2: Flight Selection", "POST", "test/message", 200,
+                                   params={"phone": self.test_phone, "message": "1"})
+        
+        if not success2:
+            return False
+            
+        # Step 3: Payment confirmation
+        success3, _ = self.run_test("Step 3: Payment Confirmation", "POST", "test/message", 200,
+                                   params={"phone": self.test_phone, "message": "oui"})
+        
+        if not success3:
+            return False
+            
+        # Wait for payment processing and ticket generation (simulated)
+        print("   ⏳ Waiting for payment processing and ticket generation...")
+        time.sleep(8)  # Wait for background processing
+        
+        # Check if session cleared to idle after payment completion
+        success4, session_data = self.run_test("Step 4: Check Session After Payment", "GET", f"sessions/{self.test_phone}", 200)
+        
+        if success4 and session_data.get('state') == 'idle':
+            print("   ✅ Session cleared to idle after payment completion")
+            return True
+        elif success4:
+            print(f"   ❌ Session not cleared: {session_data.get('state')} (expected: idle)")
+        
+        return False
+
+    def test_pdf_ticket_generation(self):
+        """Test PDF ticket generation in tickets folder"""
+        print("\n📄 Checking PDF ticket generation...")
+        
+        # Check if tickets directory exists and has files
+        tickets_dir = "/app/backend/tickets"
+        if os.path.exists(tickets_dir):
+            ticket_files = [f for f in os.listdir(tickets_dir) if f.endswith('.pdf')]
+            if ticket_files:
+                self.ticket_filename = ticket_files[-1]  # Get the latest ticket
+                print(f"   ✅ PDF ticket found: {self.ticket_filename}")
+                self.tests_run += 1
+                self.tests_passed += 1
                 return True
             else:
-                print(f"   ⚠️  Missing tier types. Found: {tiers}")
-        return False
-
-    def test_get_flight_by_id(self):
-        """Test getting flight by ID - endpoint doesn't exist, skip"""
-        print("🔍 Testing Get Flight by ID...")
-        print("   ⚠️  Endpoint not implemented - skipping")
-        return True
-
-    def test_create_user(self):
-        """Test user creation"""
-        test_data = {
-            "first_name": "Amadou",
-            "last_name": "Diallo",
-            "phone": "+221771234567",
-            "email": "amadou.diallo@example.com"
-        }
-        success, data = self.run_test("Create User", "POST", "users", 200, test_data)
-        if success and data.get('id'):
-            self.user_id = data['id']
-            print(f"   Created user ID: {self.user_id}")
-            return True
-        return False
-
-    def test_get_user_by_id(self):
-        """Test getting user by ID"""
-        if not self.user_id:
-            print("❌ Skipped - No user ID available")
-            return False
+                print("   ❌ No PDF tickets found in tickets directory")
+        else:
+            print("   ❌ Tickets directory not found")
         
-        success, data = self.run_test("Get User by ID", "GET", f"users/{self.user_id}", 200)
+        self.tests_run += 1
+        return False
+
+    def test_ticket_download(self):
+        """Test ticket PDF download endpoint"""
+        if not self.ticket_filename:
+            print("❌ Skipped - No ticket filename available")
+            self.tests_run += 1
+            return False
+            
+        success, data = self.run_test("Ticket Download", "GET", f"tickets/{self.ticket_filename}", 200)
         if success:
-            print(f"   User: {data.get('first_name')} {data.get('last_name')}")
+            print(f"   ✅ Ticket PDF downloadable: {self.ticket_filename}")
             return True
         return False
 
-    def test_bulk_user_creation(self):
-        """Test bulk user creation"""
-        test_data = [
-            {
-                "first_name": "Fatou",
-                "last_name": "Sow",
-                "phone": "+221771234568",
-                "email": "fatou.sow@example.com"
-            },
-            {
-                "first_name": "Moussa",
-                "last_name": "Ba",
-                "phone": "+221771234569",
-                "email": "moussa.ba@example.com"
-            }
-        ]
-        success, data = self.run_test("Bulk User Creation", "POST", "users/bulk", 200, test_data)
-        if success and isinstance(data, list) and len(data) == 2:
-            print(f"   Created {len(data)} users")
+    def test_booking_retrieval(self):
+        """Test booking retrieval by reference"""
+        if not self.booking_ref:
+            # Try to find a booking reference from recent bookings
+            print("   ℹ️  No booking reference available, skipping...")
+            self.tests_run += 1
             return True
-        return False
-
-    def test_create_booking(self):
-        """Test booking creation"""
-        if not self.user_id:
-            print("❌ Skipped - No user ID available")
-            return False
             
-        test_flight_id = str(uuid.uuid4())
-        # Create proper flight data
-        flight_data = {
-            "id": test_flight_id,
-            "airline": "Air Senegal",
-            "flight_number": "HC123",
-            "origin": "DSS",
-            "destination": "LOS",
-            "departure_time": "2026-04-15T08:00:00",
-            "arrival_time": "2026-04-15T10:30:00",
-            "duration": "2h 30m",
-            "price": 75000,
-            "currency": "XOF",
-            "tier": "ECO",
-            "stops": 0,
-            "available_seats": 50,
-            "is_demo": True
-        }
-        
-        test_data = {
-            "user_id": self.user_id,
-            "flight_id": test_flight_id,
-            "flight_data": flight_data,
-            "passengers": 1,
-            "travel_class": "economy",
-            "passenger_name": "Amadou Diallo"
-        }
-        success, data = self.run_test("Create Booking", "POST", "bookings", 200, test_data)
-        if success and data.get('id'):
-            self.booking_id = data['id']
-            print(f"   Created booking ID: {self.booking_id}")
-            print(f"   Booking ref: {data.get('booking_ref')}")
-            return True
-        return False
-
-    def test_get_user_bookings(self):
-        """Test getting user bookings"""
-        if not self.user_id:
-            print("❌ Skipped - No user ID available")
-            return False
-            
-        success, data = self.run_test("Get User Bookings", "GET", f"bookings/user/{self.user_id}", 200)
-        if success and isinstance(data, list):
-            print(f"   Found {len(data)} bookings for user")
-            return True
-        return False
-
-    def test_get_booking_by_id(self):
-        """Test getting booking by ID"""
-        if not self.booking_id:
-            print("❌ Skipped - No booking ID available")
-            return False
-            
-        success, data = self.run_test("Get Booking by ID", "GET", f"bookings/{self.booking_id}", 200)
-        if success:
-            print(f"   Booking: {data.get('airline')} {data.get('flight_number')}")
-            return True
-        return False
-
-    def test_momo_payment(self):
-        """Test MTN MoMo payment initiation"""
-        if not self.booking_id:
-            print("❌ Skipped - No booking ID available")
-            return False
-            
-        test_data = {
-            "booking_id": self.booking_id,
-            "amount": 75000,
-            "currency": "XOF",
-            "phone_number": "+221771234567",
-            "payment_method": "momo"
-        }
-        success, data = self.run_test("MTN MoMo Payment", "POST", "payments/initiate", 200, test_data)
-        if success and data.get('status') in ['pending', 'success']:
-            print(f"   Payment status: {data.get('status')}")
-            print(f"   Reference ID: {data.get('reference_id')}")
-            return True
-        return False
-
-    def test_google_pay_payment(self):
-        """Test Google Pay payment"""
-        if not self.booking_id:
-            print("❌ Skipped - No booking ID available")
-            return False
-            
-        test_data = {
-            "booking_id": self.booking_id,
-            "amount": 75000,
-            "currency": "XOF",
-            "phone_number": "+221771234567",
-            "payment_method": "google"
-        }
-        success, data = self.run_test("Google Pay Payment", "POST", "payments/initiate", 200, test_data)
-        if success and data.get('status') in ['pending', 'success']:
-            print(f"   Payment status: {data.get('status')}")
-            print(f"   Reference ID: {data.get('reference_id')}")
-            return True
-        return False
-
-    def test_apple_pay_payment(self):
-        """Test Apple Pay payment"""
-        if not self.booking_id:
-            print("❌ Skipped - No booking ID available")
-            return False
-            
-        test_data = {
-            "booking_id": self.booking_id,
-            "amount": 75000,
-            "currency": "XOF",
-            "phone_number": "+221771234567",
-            "payment_method": "apple"
-        }
-        success, data = self.run_test("Apple Pay Payment", "POST", "payments/initiate", 200, test_data)
-        if success and data.get('status') in ['pending', 'success']:
-            print(f"   Payment status: {data.get('status')}")
-            print(f"   Reference ID: {data.get('reference_id')}")
-            return True
-        return False
-
-    def test_whatsapp_ticket(self):
-        """Test WhatsApp ticket sending"""
-        if not self.booking_id:
-            print("❌ Skipped - No booking ID available")
-            return False
-            
-        test_data = {
-            "phone_number": "+221771234567",
-            "booking_id": self.booking_id
-        }
-        success, data = self.run_test("WhatsApp Ticket", "POST", "whatsapp/send-ticket", 200, test_data)
-        if success and data.get('status') == 'sent':
-            print(f"   Ticket sent to: {data.get('phone_number')}")
+        success, data = self.run_test("Booking Retrieval", "GET", f"bookings/{self.booking_ref}", 200)
+        if success and data.get('booking_ref') == self.booking_ref:
+            print(f"   ✅ Booking retrieved: {data.get('booking_ref')}")
             return True
         return False
 
 def main():
-    print("🚀 Starting Travelio API Tests")
-    print("=" * 50)
+    print("🚀 Starting Travelio WhatsApp Agent Tests")
+    print("=" * 60)
     
-    tester = TravelioAPITester()
+    tester = TravelioWhatsAppTester()
     
-    # Core API Tests
+    # WhatsApp Agent Tests
     tests = [
         tester.test_health_check,
-        tester.test_cities_endpoint,
-        tester.test_parse_intent_english,
-        tester.test_parse_intent_french,
-        tester.test_flight_search,
-        tester.test_get_flight_by_id,
-        tester.test_create_user,
-        tester.test_get_user_by_id,
-        tester.test_bulk_user_creation,
-        tester.test_create_booking,
-        tester.test_get_user_bookings,
-        tester.test_get_booking_by_id,
-        tester.test_momo_payment,
-        tester.test_google_pay_payment,
-        tester.test_apple_pay_payment,
-        tester.test_whatsapp_ticket,
+        tester.test_webhook_verification,
+        tester.test_welcome_message,
+        tester.test_travel_request_parsing,
+        tester.test_flight_selection,
+        tester.test_payment_confirmation,
+        tester.test_session_management,
+        tester.test_cancel_command,
+        tester.test_intent_parsing_french,
+        tester.test_intent_parsing_english,
+        tester.test_complete_booking_flow,
+        tester.test_pdf_ticket_generation,
+        tester.test_ticket_download,
+        tester.test_booking_retrieval,
     ]
     
     # Run all tests
@@ -350,20 +324,23 @@ def main():
             print(f"❌ Test failed with exception: {e}")
     
     # Print results
-    print("\n" + "=" * 50)
+    print("\n" + "=" * 60)
     print(f"📊 Test Results: {tester.tests_passed}/{tester.tests_run} passed")
     success_rate = (tester.tests_passed / tester.tests_run * 100) if tester.tests_run > 0 else 0
     print(f"📈 Success Rate: {success_rate:.1f}%")
     
-    if success_rate >= 80:
-        print("🎉 Backend API tests mostly successful!")
+    if success_rate >= 90:
+        print("🎉 WhatsApp Agent backend tests highly successful!")
         return 0
-    elif success_rate >= 60:
-        print("⚠️  Backend API has some issues but core functionality works")
+    elif success_rate >= 75:
+        print("✅ WhatsApp Agent backend mostly working with minor issues")
         return 1
-    else:
-        print("❌ Backend API has significant issues")
+    elif success_rate >= 50:
+        print("⚠️  WhatsApp Agent backend has some issues but core functionality works")
         return 2
+    else:
+        print("❌ WhatsApp Agent backend has significant issues")
+        return 3
 
 if __name__ == "__main__":
     sys.exit(main())

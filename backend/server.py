@@ -1,13 +1,13 @@
-from fastapi import FastAPI, APIRouter, HTTPException, BackgroundTasks
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, APIRouter, HTTPException, Request, BackgroundTasks
+from fastapi.responses import FileResponse, JSONResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
 from pathlib import Path
-from pydantic import BaseModel, Field, ConfigDict
-from typing import List, Optional
+from pydantic import BaseModel, Field
+from typing import Optional, List, Dict, Any
 import uuid
 from datetime import datetime, timezone, timedelta
 import random
@@ -15,17 +15,19 @@ import asyncio
 import httpx
 import json
 import string
+import hashlib
+import hmac
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 # MongoDB connection
-mongo_url = os.environ['MONGO_URL']
+mongo_url = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
 client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+db = client[os.environ.get('DB_NAME', 'travelio')]
 
 # Create the main app
-app = FastAPI()
+app = FastAPI(title="Travelio WhatsApp Agent", version="3.0.0")
 
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
@@ -44,132 +46,26 @@ TICKETS_DIR.mkdir(exist_ok=True)
 # API timeout
 API_TIMEOUT = 10.0
 
-# ========== MODELS ==========
+# ========== CONFIGURATION ==========
 
-class UserProfile(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    first_name: str
-    last_name: str
-    phone: Optional[str] = None
-    email: Optional[str] = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+WHATSAPP_PHONE_ID = os.environ.get('WHATSAPP_PHONE_ID', '')
+WHATSAPP_TOKEN = os.environ.get('WHATSAPP_TOKEN', '')
+WHATSAPP_VERIFY_TOKEN = os.environ.get('WHATSAPP_VERIFY_TOKEN', 'travelio_verify_2024')
+WHATSAPP_APP_SECRET = os.environ.get('WHATSAPP_APP_SECRET', '')
 
-class UserProfileCreate(BaseModel):
-    first_name: str
-    last_name: str
-    phone: Optional[str] = None
-    email: Optional[str] = None
-
-class TravelIntent(BaseModel):
-    destination: Optional[str] = None
-    origin: Optional[str] = None
-    departure_date: Optional[str] = None
-    return_date: Optional[str] = None
-    budget: Optional[float] = None
-    passengers: int = 1
-    travel_class: str = "economy"
-    language: str = "fr"
-
-class IntentParseRequest(BaseModel):
-    text: str
-    language: str = "fr"
-
-class Flight(BaseModel):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    airline: str
-    flight_number: str
-    origin: str
-    destination: str
-    departure_time: str
-    arrival_time: str
-    duration: str
-    price: float
-    currency: str = "XOF"
-    tier: str  # ECO, FAST, PREMIUM
-    stops: int = 0
-    available_seats: int
-    is_demo: bool = False  # Flag for demo/mock data
-
-class FlightSearchRequest(BaseModel):
-    origin: str
-    destination: str
-    departure_date: str
-    return_date: Optional[str] = None
-    passengers: int = 1
-    travel_class: str = "economy"
-    budget: Optional[float] = None
-
-class Booking(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    booking_ref: str = ""  # TRV-XXXXXX format
-    user_id: str
-    flight_id: str
-    airline: str
-    flight_number: str
-    origin: str
-    destination: str
-    departure_time: str
-    arrival_time: str
-    return_date: Optional[str] = None
-    price: float
-    currency: str = "XOF"
-    passengers: int
-    travel_class: str = "economy"
-    passenger_name: str = ""
-    status: str = "pending"
-    payment_method: str
-    payment_status: str = "pending"
-    payment_reference: Optional[str] = None
-    ticket_url: Optional[str] = None
-    qr_code: str = ""
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-class BookingCreate(BaseModel):
-    user_id: str
-    flight_id: str
-    flight_data: dict  # Full flight info
-    passengers: int = 1
-    travel_class: str = "economy"
-    passenger_name: str = ""
-    return_date: Optional[str] = None
-
-class PaymentRequest(BaseModel):
-    booking_id: str
-    amount: float
-    currency: str = "XOF"
-    phone_number: str
-    payment_method: str = "momo"
-
-class PaymentStatusRequest(BaseModel):
-    payment_reference: str
-
-class WhatsAppRequest(BaseModel):
-    phone_number: str
-    booking_id: str
-
-class MomoCallbackRequest(BaseModel):
-    referenceId: str
-    status: str
-    financialTransactionId: Optional[str] = None
-
-# ========== CITY MAPPINGS ==========
-
+# West African cities
 WEST_AFRICAN_CITIES = {
-    "Dakar": "DSS",
-    "Lagos": "LOS",
-    "Accra": "ACC",
-    "Abidjan": "ABJ",
-    "Ouagadougou": "OUA",
-    "Bamako": "BKO",
-    "Conakry": "CKY",
-    "Niamey": "NIM",
-    "Cotonou": "COO",
-    "Lomé": "LFW"
+    "dakar": {"name": "Dakar", "code": "DSS", "country": "Senegal"},
+    "lagos": {"name": "Lagos", "code": "LOS", "country": "Nigeria"},
+    "accra": {"name": "Accra", "code": "ACC", "country": "Ghana"},
+    "abidjan": {"name": "Abidjan", "code": "ABJ", "country": "Côte d'Ivoire"},
+    "ouagadougou": {"name": "Ouagadougou", "code": "OUA", "country": "Burkina Faso"},
+    "bamako": {"name": "Bamako", "code": "BKO", "country": "Mali"},
+    "conakry": {"name": "Conakry", "code": "CKY", "country": "Guinea"},
+    "niamey": {"name": "Niamey", "code": "NIM", "country": "Niger"},
+    "cotonou": {"name": "Cotonou", "code": "COO", "country": "Benin"},
+    "lome": {"name": "Lomé", "code": "LFW", "country": "Togo"}
 }
-
-IATA_TO_CITY = {v: k for k, v in WEST_AFRICAN_CITIES.items()}
 
 AIRLINES = [
     {"name": "Air Senegal", "code": "HC"},
@@ -179,6 +75,26 @@ AIRLINES = [
     {"name": "Air Côte d'Ivoire", "code": "HF"}
 ]
 
+# ========== MODELS ==========
+
+class ConversationState:
+    """Track conversation state for each user"""
+    IDLE = "idle"
+    AWAITING_FLIGHT_SELECTION = "awaiting_flight_selection"
+    AWAITING_PAYMENT_CONFIRMATION = "awaiting_payment_confirmation"
+    AWAITING_MOMO_APPROVAL = "awaiting_momo_approval"
+
+class UserSession(BaseModel):
+    phone: str
+    state: str = ConversationState.IDLE
+    language: str = "fr"  # Default French
+    intent: Optional[Dict[str, Any]] = None
+    flights: Optional[List[Dict[str, Any]]] = None
+    selected_flight: Optional[Dict[str, Any]] = None
+    booking_id: Optional[str] = None
+    payment_reference: Optional[str] = None
+    last_activity: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
 # ========== HELPER FUNCTIONS ==========
 
 def generate_booking_ref() -> str:
@@ -187,143 +103,374 @@ def generate_booking_ref() -> str:
     suffix = ''.join(random.choices(chars, k=6))
     return f"TRV-{suffix}"
 
-def get_iata_code(city_name: str) -> str:
-    """Get IATA code from city name"""
-    return WEST_AFRICAN_CITIES.get(city_name, city_name.upper()[:3])
+def get_city_info(name: str) -> Optional[Dict]:
+    """Get city info from name"""
+    name_lower = name.lower().strip()
+    for key, city in WEST_AFRICAN_CITIES.items():
+        if key in name_lower or city["name"].lower() in name_lower:
+            return city
+    return None
 
-def get_city_name(iata_code: str) -> str:
-    """Get city name from IATA code"""
-    return IATA_TO_CITY.get(iata_code, iata_code)
+def format_price(amount: float) -> str:
+    """Format price with thousands separator"""
+    return f"{int(amount):,}".replace(",", " ")
 
-# ========== AVIATIONSTACK INTEGRATION ==========
+def detect_language(text: str) -> str:
+    """Simple language detection based on common words"""
+    french_words = ["je", "veux", "aller", "à", "pour", "le", "la", "un", "une", "merci", "bonjour", "oui", "non"]
+    text_lower = text.lower()
+    french_count = sum(1 for word in french_words if word in text_lower)
+    return "fr" if french_count >= 2 else "en"
 
-async def search_flights_aviationstack(origin: str, destination: str, date: str) -> List[dict]:
+# ========== SESSION MANAGEMENT ==========
+
+async def get_or_create_session(phone: str) -> UserSession:
+    """Get or create user session"""
+    session_data = await db.sessions.find_one({"phone": phone}, {"_id": 0})
+    
+    if session_data:
+        # Update last activity
+        await db.sessions.update_one(
+            {"phone": phone},
+            {"$set": {"last_activity": datetime.now(timezone.utc).isoformat()}}
+        )
+        return UserSession(**session_data)
+    
+    # Create new session
+    session = UserSession(phone=phone)
+    await db.sessions.insert_one({
+        **session.model_dump(),
+        "last_activity": session.last_activity.isoformat()
+    })
+    return session
+
+async def update_session(phone: str, updates: Dict):
+    """Update user session"""
+    updates["last_activity"] = datetime.now(timezone.utc).isoformat()
+    await db.sessions.update_one({"phone": phone}, {"$set": updates})
+
+async def clear_session(phone: str):
+    """Reset session to idle state"""
+    await db.sessions.update_one(
+        {"phone": phone},
+        {"$set": {
+            "state": ConversationState.IDLE,
+            "intent": None,
+            "flights": None,
+            "selected_flight": None,
+            "booking_id": None,
+            "payment_reference": None,
+            "last_activity": datetime.now(timezone.utc).isoformat()
+        }}
+    )
+
+# ========== WHATSAPP API ==========
+
+async def send_whatsapp_message(to: str, message: str):
+    """Send text message via WhatsApp"""
+    if not WHATSAPP_PHONE_ID or not WHATSAPP_TOKEN:
+        logger.warning(f"WhatsApp not configured. Would send to {to}: {message[:100]}...")
+        return {"status": "simulated", "message": message}
+    
+    url = f"https://graph.facebook.com/v18.0/{WHATSAPP_PHONE_ID}/messages"
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    
+    # Format phone number
+    phone = to.replace("+", "").replace(" ", "").replace("-", "")
+    
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": phone,
+        "type": "text",
+        "text": {"body": message}
+    }
+    
+    try:
+        async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
+            response = await client.post(url, json=payload, headers=headers)
+            if response.status_code == 200:
+                logger.info(f"WhatsApp message sent to {phone}")
+                return {"status": "sent"}
+            else:
+                logger.error(f"WhatsApp send failed: {response.status_code} - {response.text}")
+                return {"status": "failed", "error": response.text}
+    except Exception as e:
+        logger.error(f"WhatsApp send error: {e}")
+        return {"status": "failed", "error": str(e)}
+
+async def send_whatsapp_document(to: str, document_url: str, filename: str, caption: str = ""):
+    """Send document via WhatsApp"""
+    if not WHATSAPP_PHONE_ID or not WHATSAPP_TOKEN:
+        logger.warning(f"WhatsApp not configured. Would send document to {to}")
+        return {"status": "simulated"}
+    
+    url = f"https://graph.facebook.com/v18.0/{WHATSAPP_PHONE_ID}/messages"
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    
+    phone = to.replace("+", "").replace(" ", "").replace("-", "")
+    
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": phone,
+        "type": "document",
+        "document": {
+            "link": document_url,
+            "filename": filename,
+            "caption": caption
+        }
+    }
+    
+    try:
+        async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
+            response = await client.post(url, json=payload, headers=headers)
+            return {"status": "sent" if response.status_code == 200 else "failed"}
+    except Exception as e:
+        logger.error(f"WhatsApp document send error: {e}")
+        return {"status": "failed", "error": str(e)}
+
+async def send_whatsapp_interactive(to: str, body_text: str, buttons: List[Dict]):
+    """Send interactive button message via WhatsApp"""
+    if not WHATSAPP_PHONE_ID or not WHATSAPP_TOKEN:
+        logger.warning(f"WhatsApp not configured. Would send interactive to {to}")
+        return {"status": "simulated"}
+    
+    url = f"https://graph.facebook.com/v18.0/{WHATSAPP_PHONE_ID}/messages"
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    
+    phone = to.replace("+", "").replace(" ", "").replace("-", "")
+    
+    # WhatsApp allows max 3 buttons
+    button_list = [
+        {"type": "reply", "reply": {"id": btn["id"], "title": btn["title"][:20]}}
+        for btn in buttons[:3]
+    ]
+    
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": phone,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {"text": body_text},
+            "action": {"buttons": button_list}
+        }
+    }
+    
+    try:
+        async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
+            response = await client.post(url, json=payload, headers=headers)
+            return {"status": "sent" if response.status_code == 200 else "failed"}
+    except Exception as e:
+        logger.error(f"WhatsApp interactive send error: {e}")
+        return {"status": "failed", "error": str(e)}
+
+# ========== AI INTENT PARSING ==========
+
+async def parse_travel_intent(text: str, language: str = "fr") -> Dict[str, Any]:
+    """Parse travel intent using Claude Sonnet 4.5"""
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        
+        api_key = os.environ.get('EMERGENT_LLM_KEY')
+        if not api_key:
+            logger.warning("No EMERGENT_LLM_KEY, using fallback parser")
+            return fallback_parse_intent(text, language)
+        
+        system_prompt = f"""You are a travel booking assistant parsing user messages.
+        
+Extract travel details and return ONLY a JSON object:
+{{
+  "destination": "city name or null",
+  "origin": "city name, default Dakar if not mentioned",
+  "departure_date": "YYYY-MM-DD or null",
+  "return_date": "YYYY-MM-DD or null for one-way",
+  "budget": number in XOF or null,
+  "passengers": number (default 1),
+  "travel_class": "economy", "business", or "first"
+}}
+
+Supported cities: Dakar, Lagos, Accra, Abidjan, Ouagadougou, Bamako, Conakry, Niamey, Cotonou, Lomé
+
+Parse relative dates (next Friday, tomorrow, etc.) from today: {datetime.now().strftime("%Y-%m-%d")}
+Convert USD to XOF: 1 USD ≈ 600 XOF
+
+ONLY output valid JSON, no explanation."""
+
+        chat = LlmChat(
+            api_key=api_key,
+            session_id=f"intent-{uuid.uuid4()}",
+            system_message=system_prompt
+        ).with_model("anthropic", "claude-sonnet-4-5-20250929")
+        
+        response = await chat.send_message(UserMessage(text=text))
+        
+        # Parse JSON response
+        response_text = response.strip()
+        if response_text.startswith("```"):
+            response_text = response_text.split("```")[1]
+            if response_text.startswith("json"):
+                response_text = response_text[4:]
+        
+        return json.loads(response_text)
+        
+    except Exception as e:
+        logger.error(f"AI parsing error: {e}")
+        return fallback_parse_intent(text, language)
+
+def fallback_parse_intent(text: str, language: str) -> Dict[str, Any]:
+    """Simple fallback parser"""
+    import re
+    text_lower = text.lower()
+    
+    # Find destination
+    destination = None
+    for key, city in WEST_AFRICAN_CITIES.items():
+        if key in text_lower or city["name"].lower() in text_lower:
+            destination = city["name"]
+            break
+    
+    # Find budget
+    budget = None
+    budget_match = re.search(r'(\d+)\s*(dollars?|\$|usd|xof|fcfa|francs?)', text_lower)
+    if budget_match:
+        amount = int(budget_match.group(1))
+        currency = budget_match.group(2)
+        budget = amount * 600 if currency in ['dollars', '$', 'usd', 'dollar'] else amount
+    
+    # Default date
+    next_week = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
+    
+    return {
+        "destination": destination,
+        "origin": "Dakar",
+        "departure_date": next_week,
+        "return_date": None,
+        "budget": budget,
+        "passengers": 1,
+        "travel_class": "economy"
+    }
+
+# ========== FLIGHT SEARCH ==========
+
+async def search_flights_aviationstack(origin: str, destination: str, date: str) -> List[Dict]:
     """Search real flights using AviationStack API"""
     api_key = os.environ.get('AVIATIONSTACK_API_KEY')
     
     if not api_key or api_key == 'your_key_here':
-        logger.warning("AviationStack API key not configured")
         return []
     
-    origin_iata = get_iata_code(origin)
-    dest_iata = get_iata_code(destination)
+    origin_city = get_city_info(origin)
+    dest_city = get_city_info(destination)
+    
+    if not origin_city or not dest_city:
+        return []
     
     url = "http://api.aviationstack.com/v1/flights"
     params = {
         "access_key": api_key,
-        "dep_iata": origin_iata,
-        "arr_iata": dest_iata,
+        "dep_iata": origin_city["code"],
+        "arr_iata": dest_city["code"],
         "flight_date": date
     }
     
     try:
         async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
             response = await client.get(url, params=params)
-            
             if response.status_code == 200:
                 data = response.json()
-                
-                if data.get("error"):
-                    logger.error(f"AviationStack API error: {data['error']}")
-                    return []
-                
                 return data.get("data", [])
-            else:
-                logger.error(f"AviationStack API returned {response.status_code}")
-                return []
-                
-    except httpx.TimeoutException:
-        logger.error("AviationStack API timeout")
-        return []
     except Exception as e:
-        logger.error(f"AviationStack API error: {e}")
-        return []
+        logger.error(f"AviationStack error: {e}")
+    
+    return []
 
-def transform_aviationstack_flights(raw_flights: List[dict], budget: Optional[float] = None) -> List[Flight]:
-    """Transform AviationStack response to our Flight model"""
-    flights = []
-    tiers = ["ECO", "FAST", "PREMIUM"]
-    
-    for i, raw in enumerate(raw_flights[:3]):  # Take up to 3 flights
-        tier = tiers[i] if i < 3 else "ECO"
-        
-        # Extract flight data
-        departure = raw.get("departure", {})
-        arrival = raw.get("arrival", {})
-        airline_data = raw.get("airline", {})
-        flight_data = raw.get("flight", {})
-        
-        # Calculate duration
-        dep_time = departure.get("scheduled", "")
-        arr_time = arrival.get("scheduled", "")
-        duration = "2h 30m"  # Default if calculation fails
-        
-        # Generate price based on tier
-        base_price = random.randint(50000, 100000)
-        tier_multipliers = {"ECO": 1.0, "FAST": 1.4, "PREMIUM": 2.2}
-        price = int(base_price * tier_multipliers.get(tier, 1.0))
-        
-        if budget and price > budget:
-            price = int(budget * 0.95)
-        
-        flight = Flight(
-            airline=airline_data.get("name", "Unknown Airline"),
-            flight_number=flight_data.get("iata", f"XX{random.randint(100,999)}"),
-            origin=departure.get("iata", "DSS"),
-            destination=arrival.get("iata", "ABJ"),
-            departure_time=dep_time or f"{datetime.now().strftime('%Y-%m-%d')}T08:00:00",
-            arrival_time=arr_time or f"{datetime.now().strftime('%Y-%m-%d')}T10:30:00",
-            duration=duration,
-            price=price,
-            tier=tier,
-            stops=0 if tier != "ECO" else 1,
-            available_seats=random.randint(5, 50),
-            is_demo=False
-        )
-        flights.append(flight)
-    
-    return flights
-
-def generate_mock_flights(origin: str, destination: str, date: str, budget: Optional[float] = None) -> List[Flight]:
-    """Generate mock flight options (fallback)"""
-    flights = []
-    
-    origin_code = get_iata_code(origin)
-    dest_code = get_iata_code(destination)
+def generate_mock_flights(origin: str, destination: str, date: str, budget: Optional[float] = None) -> List[Dict]:
+    """Generate mock flight options"""
+    origin_city = get_city_info(origin) or {"name": origin, "code": "DSS"}
+    dest_city = get_city_info(destination) or {"name": destination, "code": "ABJ"}
     
     tiers = [
-        {"tier": "ECO", "price_mult": 1.0, "stops": 1, "duration": "4h 30m"},
-        {"tier": "FAST", "price_mult": 1.4, "stops": 0, "duration": "2h 15m"},
-        {"tier": "PREMIUM", "price_mult": 2.2, "stops": 0, "duration": "2h 00m"}
+        {"tier": "ECO", "label_fr": "Économique", "label_en": "Economy", "price_mult": 1.0, "stops": 1, "duration": "4h 30m"},
+        {"tier": "FAST", "label_fr": "Direct", "label_en": "Direct", "price_mult": 1.4, "stops": 0, "duration": "2h 15m"},
+        {"tier": "PREMIUM", "label_fr": "Premium", "label_en": "Premium", "price_mult": 2.2, "stops": 0, "duration": "2h 00m"}
     ]
     
     base_price = random.randint(45000, 85000)
+    flights = []
     
-    for tier_info in tiers:
-        airline = random.choice(AIRLINES)
+    for i, tier_info in enumerate(tiers):
+        airline = AIRLINES[i % len(AIRLINES)]
         price = int(base_price * tier_info["price_mult"])
         
         if budget and price > budget:
             price = int(budget * 0.95)
         
-        dep_hour = random.randint(6, 18)
-        flight = Flight(
-            airline=airline["name"],
-            flight_number=f"{airline['code']}{random.randint(100, 999)}",
-            origin=origin_code,
-            destination=dest_code,
-            departure_time=f"{date}T{dep_hour:02d}:00:00",
-            arrival_time=f"{date}T{(dep_hour + 2) % 24:02d}:30:00",
-            duration=tier_info["duration"],
-            price=price,
-            tier=tier_info["tier"],
-            stops=tier_info["stops"],
-            available_seats=random.randint(5, 50),
-            is_demo=True  # Mark as demo data
-        )
-        flights.append(flight)
+        dep_hour = 6 + (i * 4)
+        flights.append({
+            "id": str(uuid.uuid4()),
+            "option_number": i + 1,
+            "airline": airline["name"],
+            "flight_number": f"{airline['code']}{random.randint(100, 999)}",
+            "origin": origin_city["code"],
+            "origin_city": origin_city["name"],
+            "destination": dest_city["code"],
+            "destination_city": dest_city["name"],
+            "departure_time": f"{date}T{dep_hour:02d}:00:00",
+            "arrival_time": f"{date}T{dep_hour + 2:02d}:30:00",
+            "duration": tier_info["duration"],
+            "price": price,
+            "currency": "XOF",
+            "tier": tier_info["tier"],
+            "tier_label_fr": tier_info["label_fr"],
+            "tier_label_en": tier_info["label_en"],
+            "stops": tier_info["stops"],
+            "is_demo": True
+        })
     
     return flights
+
+async def search_flights(origin: str, destination: str, date: str, budget: Optional[float] = None) -> List[Dict]:
+    """Search flights with fallback to mock data"""
+    # Try real API first
+    real_flights = await search_flights_aviationstack(origin, destination, date)
+    
+    if real_flights:
+        # Transform to our format
+        flights = []
+        for i, flight in enumerate(real_flights[:3]):
+            dep = flight.get("departure", {})
+            arr = flight.get("arrival", {})
+            airline = flight.get("airline", {})
+            
+            flights.append({
+                "id": str(uuid.uuid4()),
+                "option_number": i + 1,
+                "airline": airline.get("name", "Unknown"),
+                "flight_number": flight.get("flight", {}).get("iata", "XX000"),
+                "origin": dep.get("iata", "DSS"),
+                "destination": arr.get("iata", "ABJ"),
+                "departure_time": dep.get("scheduled", ""),
+                "arrival_time": arr.get("scheduled", ""),
+                "duration": "2h 30m",
+                "price": random.randint(50000, 120000),
+                "currency": "XOF",
+                "tier": ["ECO", "FAST", "PREMIUM"][i],
+                "stops": 0,
+                "is_demo": False
+            })
+        return flights
+    
+    # Fallback to mock
+    return generate_mock_flights(origin, destination, date, budget)
 
 # ========== MTN MOMO INTEGRATION ==========
 
@@ -337,218 +484,108 @@ async def get_momo_access_token() -> Optional[str]:
     if not all([api_user, api_key, subscription_key]) or api_user == 'your_uuid_here':
         return None
     
-    url = f"{base_url}/collection/token/"
-    
     try:
         async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
             response = await client.post(
-                url,
+                f"{base_url}/collection/token/",
                 auth=(api_user, api_key),
-                headers={
-                    "Ocp-Apim-Subscription-Key": subscription_key
-                }
+                headers={"Ocp-Apim-Subscription-Key": subscription_key}
             )
-            
             if response.status_code == 200:
-                data = response.json()
-                return data.get("access_token")
-            else:
-                logger.error(f"MoMo token request failed: {response.status_code}")
-                return None
-                
+                return response.json().get("access_token")
     except Exception as e:
         logger.error(f"MoMo token error: {e}")
-        return None
+    
+    return None
 
-async def initiate_momo_payment(amount: float, phone_number: str, booking_ref: str) -> dict:
-    """Initiate MTN MoMo collection request"""
+async def initiate_momo_payment(phone: str, amount: float, booking_ref: str) -> Dict:
+    """Initiate MTN MoMo collection"""
     token = await get_momo_access_token()
     
     if not token:
-        # Fallback to simulated payment
-        logger.warning("MoMo not configured, using simulation")
-        return await simulate_momo_payment(amount, phone_number, booking_ref)
+        # Simulate payment
+        return {
+            "status": "pending",
+            "reference_id": f"SIM-{uuid.uuid4().hex[:12].upper()}",
+            "is_simulated": True
+        }
     
     subscription_key = os.environ.get('MOMO_SUBSCRIPTION_KEY')
     base_url = os.environ.get('MOMO_BASE_URL')
     environment = os.environ.get('MOMO_ENVIRONMENT', 'sandbox')
     currency = os.environ.get('MOMO_CURRENCY', 'XOF')
-    callback_url = os.environ.get('MOMO_CALLBACK_URL')
     
     reference_id = str(uuid.uuid4())
-    url = f"{base_url}/collection/v1_0/requesttopay"
-    
-    # Format phone number (remove + and spaces)
-    phone = phone_number.replace("+", "").replace(" ", "").replace("-", "")
+    phone_clean = phone.replace("+", "").replace(" ", "").replace("-", "")
     
     payload = {
         "amount": str(int(amount)),
         "currency": currency,
         "externalId": booking_ref,
-        "payer": {
-            "partyIdType": "MSISDN",
-            "partyId": phone
-        },
-        "payerMessage": f"Travelio Booking {booking_ref}",
-        "payeeNote": "Flight booking payment"
+        "payer": {"partyIdType": "MSISDN", "partyId": phone_clean},
+        "payerMessage": f"Travelio {booking_ref}",
+        "payeeNote": "Flight booking"
     }
     
     try:
         async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
             response = await client.post(
-                url,
+                f"{base_url}/collection/v1_0/requesttopay",
                 json=payload,
                 headers={
                     "Authorization": f"Bearer {token}",
                     "X-Reference-Id": reference_id,
                     "X-Target-Environment": environment,
                     "Ocp-Apim-Subscription-Key": subscription_key,
-                    "Content-Type": "application/json",
-                    "X-Callback-Url": callback_url
+                    "Content-Type": "application/json"
                 }
             )
             
             if response.status_code == 202:
-                return {
-                    "status": "pending",
-                    "reference_id": reference_id,
-                    "message": "Payment initiated. Please approve on your phone."
-                }
-            else:
-                logger.error(f"MoMo payment initiation failed: {response.status_code} - {response.text}")
-                return await simulate_momo_payment(amount, phone_number, booking_ref)
-                
+                return {"status": "pending", "reference_id": reference_id, "is_simulated": False}
     except Exception as e:
         logger.error(f"MoMo payment error: {e}")
-        return await simulate_momo_payment(amount, phone_number, booking_ref)
-
-async def check_momo_payment_status(reference_id: str) -> dict:
-    """Check MTN MoMo payment status"""
-    token = await get_momo_access_token()
     
+    # Fallback to simulation
+    return {
+        "status": "pending",
+        "reference_id": f"SIM-{uuid.uuid4().hex[:12].upper()}",
+        "is_simulated": True
+    }
+
+async def check_momo_status(reference_id: str) -> str:
+    """Check MoMo payment status"""
+    if reference_id.startswith("SIM-"):
+        return "SUCCESSFUL"  # Simulated always succeeds
+    
+    token = await get_momo_access_token()
     if not token:
-        # Simulate success for demo
-        return {"status": "SUCCESSFUL", "is_simulated": True}
+        return "SUCCESSFUL"
     
     subscription_key = os.environ.get('MOMO_SUBSCRIPTION_KEY')
     base_url = os.environ.get('MOMO_BASE_URL')
     environment = os.environ.get('MOMO_ENVIRONMENT', 'sandbox')
     
-    url = f"{base_url}/collection/v1_0/requesttopay/{reference_id}"
-    
     try:
         async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
             response = await client.get(
-                url,
+                f"{base_url}/collection/v1_0/requesttopay/{reference_id}",
                 headers={
                     "Authorization": f"Bearer {token}",
                     "X-Target-Environment": environment,
                     "Ocp-Apim-Subscription-Key": subscription_key
                 }
             )
-            
             if response.status_code == 200:
-                data = response.json()
-                return {
-                    "status": data.get("status", "PENDING"),
-                    "financial_transaction_id": data.get("financialTransactionId"),
-                    "is_simulated": False
-                }
-            else:
-                logger.error(f"MoMo status check failed: {response.status_code}")
-                return {"status": "FAILED", "is_simulated": False}
-                
+                return response.json().get("status", "PENDING")
     except Exception as e:
         logger.error(f"MoMo status error: {e}")
-        return {"status": "FAILED", "is_simulated": False}
-
-async def simulate_momo_payment(amount: float, phone_number: str, booking_ref: str) -> dict:
-    """Simulate MoMo payment for demo purposes"""
-    reference_id = f"SIM-{uuid.uuid4().hex[:12].upper()}"
-    return {
-        "status": "pending",
-        "reference_id": reference_id,
-        "message": "Payment initiated (simulation mode). Approve in 3 seconds.",
-        "is_simulated": True
-    }
-
-# ========== WHATSAPP INTEGRATION ==========
-
-async def send_whatsapp_message(phone_number: str, message: str, pdf_url: Optional[str] = None) -> dict:
-    """Send WhatsApp message with optional PDF attachment"""
-    phone_id = os.environ.get('WHATSAPP_PHONE_ID')
-    token = os.environ.get('WHATSAPP_TOKEN')
     
-    if not all([phone_id, token]) or phone_id == 'your_phone_id_here':
-        logger.warning("WhatsApp not configured, using simulation")
-        return {
-            "status": "simulated",
-            "message": "WhatsApp delivery simulated (API not configured)"
-        }
-    
-    # Format phone number
-    phone = phone_number.replace("+", "").replace(" ", "").replace("-", "")
-    
-    url = f"https://graph.facebook.com/v18.0/{phone_id}/messages"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
-    
-    try:
-        async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
-            # Send text message first
-            text_payload = {
-                "messaging_product": "whatsapp",
-                "to": phone,
-                "type": "text",
-                "text": {
-                    "body": message
-                }
-            }
-            
-            text_response = await client.post(url, json=text_payload, headers=headers)
-            
-            if text_response.status_code != 200:
-                logger.error(f"WhatsApp text message failed: {text_response.text}")
-                return {
-                    "status": "failed",
-                    "error": "Failed to send text message"
-                }
-            
-            # Send PDF document if URL provided
-            if pdf_url:
-                doc_payload = {
-                    "messaging_product": "whatsapp",
-                    "to": phone,
-                    "type": "document",
-                    "document": {
-                        "link": pdf_url,
-                        "caption": "Your Travelio Ticket / Votre billet Travelio",
-                        "filename": "travelio_ticket.pdf"
-                    }
-                }
-                
-                doc_response = await client.post(url, json=doc_payload, headers=headers)
-                
-                if doc_response.status_code != 200:
-                    logger.error(f"WhatsApp document failed: {doc_response.text}")
-            
-            return {
-                "status": "sent",
-                "message": "Ticket sent via WhatsApp"
-            }
-            
-    except Exception as e:
-        logger.error(f"WhatsApp error: {e}")
-        return {
-            "status": "failed",
-            "error": str(e)
-        }
+    return "PENDING"
 
 # ========== PDF TICKET GENERATION ==========
 
-def generate_ticket_pdf(booking: dict, user: dict) -> str:
+def generate_ticket_pdf(booking: Dict) -> str:
     """Generate PDF ticket with QR code"""
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
@@ -559,20 +596,17 @@ def generate_ticket_pdf(booking: dict, user: dict) -> str:
     import qrcode
     from io import BytesIO
     
-    booking_ref = booking.get('booking_ref', booking.get('qr_code', 'TRV-XXXXXX'))
+    booking_ref = booking.get('booking_ref', 'TRV-XXXXXX')
     filename = f"travelio_ticket_{booking_ref}.pdf"
     filepath = TICKETS_DIR / filename
     
-    # Create QR code with booking data
+    # Create QR code
     qr_data = json.dumps({
-        "booking_ref": booking_ref,
-        "passenger": f"{user.get('first_name', '')} {user.get('last_name', '')}",
-        "origin": booking.get('origin', ''),
-        "destination": booking.get('destination', ''),
-        "departure": booking.get('departure_time', ''),
-        "flight": booking.get('flight_number', ''),
-        "price": booking.get('price', 0),
-        "currency": booking.get('currency', 'XOF')
+        "ref": booking_ref,
+        "passenger": booking.get('passenger_name', ''),
+        "route": f"{booking.get('origin', '')} → {booking.get('destination', '')}",
+        "date": booking.get('departure_date', ''),
+        "flight": booking.get('flight_number', '')
     })
     
     qr = qrcode.QRCode(version=1, box_size=10, border=2)
@@ -580,7 +614,6 @@ def generate_ticket_pdf(booking: dict, user: dict) -> str:
     qr.make(fit=True)
     qr_img = qr.make_image(fill_color="black", back_color="white")
     
-    # Save QR to bytes
     qr_buffer = BytesIO()
     qr_img.save(qr_buffer, format='PNG')
     qr_buffer.seek(0)
@@ -589,508 +622,496 @@ def generate_ticket_pdf(booking: dict, user: dict) -> str:
     doc = SimpleDocTemplate(str(filepath), pagesize=A4, topMargin=20*mm, bottomMargin=20*mm)
     styles = getSampleStyleSheet()
     
-    # Custom styles
-    title_style = ParagraphStyle(
-        'TitleStyle',
-        parent=styles['Heading1'],
-        fontSize=24,
-        textColor=colors.HexColor('#6C63FF'),
-        alignment=TA_CENTER,
-        spaceAfter=10
-    )
-    
-    header_style = ParagraphStyle(
-        'HeaderStyle',
-        parent=styles['Normal'],
-        fontSize=10,
-        textColor=colors.HexColor('#94A3B8'),
-        alignment=TA_LEFT
-    )
-    
-    value_style = ParagraphStyle(
-        'ValueStyle',
-        parent=styles['Normal'],
-        fontSize=12,
-        textColor=colors.HexColor('#0A0F1E'),
-        alignment=TA_LEFT,
-        fontName='Helvetica-Bold'
-    )
+    title_style = ParagraphStyle('Title', parent=styles['Heading1'], fontSize=24, 
+                                  textColor=colors.HexColor('#6C63FF'), alignment=TA_CENTER)
+    header_style = ParagraphStyle('Header', fontSize=10, textColor=colors.gray)
+    value_style = ParagraphStyle('Value', fontSize=12, fontName='Helvetica-Bold')
     
     elements = []
-    
-    # Header with logo text
-    elements.append(Paragraph("TRAVELIO", title_style))
-    elements.append(Paragraph("Your Voice, Your Journey", ParagraphStyle('Tagline', fontSize=10, textColor=colors.HexColor('#94A3B8'), alignment=TA_CENTER)))
+    elements.append(Paragraph("✈️ TRAVELIO", title_style))
+    elements.append(Paragraph("Votre billet électronique / Your e-ticket", 
+                              ParagraphStyle('Sub', fontSize=10, textColor=colors.gray, alignment=TA_CENTER)))
     elements.append(Spacer(1, 20))
     
-    # QR Code
     qr_image = Image(qr_buffer, width=80, height=80)
-    
-    # Build ticket info table
-    passenger_name = f"{user.get('first_name', 'Guest')} {user.get('last_name', 'User')}"
-    
-    # Format departure time
-    dep_time = booking.get('departure_time', '')
-    if 'T' in dep_time:
-        dep_date = dep_time.split('T')[0]
-        dep_hour = dep_time.split('T')[1][:5] if len(dep_time) > 11 else ''
-        dep_formatted = f"{dep_date} at {dep_hour}"
-    else:
-        dep_formatted = dep_time
     
     ticket_data = [
         [Paragraph("<b>BOARDING PASS</b>", ParagraphStyle('BP', fontSize=14, textColor=colors.white)), qr_image],
         ["", ""],
-        [Paragraph("Passenger", header_style), Paragraph(passenger_name, value_style)],
-        [Paragraph("From", header_style), Paragraph(f"{get_city_name(booking.get('origin', ''))} ({booking.get('origin', '')})", value_style)],
-        [Paragraph("To", header_style), Paragraph(f"{get_city_name(booking.get('destination', ''))} ({booking.get('destination', '')})", value_style)],
-        [Paragraph("Flight", header_style), Paragraph(f"{booking.get('airline', '')} {booking.get('flight_number', '')}", value_style)],
-        [Paragraph("Departure", header_style), Paragraph(dep_formatted, value_style)],
-        [Paragraph("Class", header_style), Paragraph(booking.get('travel_class', 'Economy').upper(), value_style)],
-        [Paragraph("Price", header_style), Paragraph(f"{booking.get('price', 0):,.0f} {booking.get('currency', 'XOF')}", value_style)],
-        [Paragraph("Payment", header_style), Paragraph(booking.get('payment_method', 'MTN MoMo').upper(), value_style)],
-        [Paragraph("Booking Ref", header_style), Paragraph(f"<b>{booking_ref}</b>", ParagraphStyle('Ref', fontSize=14, textColor=colors.HexColor('#6C63FF')))],
+        [Paragraph("Passenger / Passager", header_style), Paragraph(booking.get('passenger_name', 'Guest'), value_style)],
+        [Paragraph("From / De", header_style), Paragraph(f"{booking.get('origin_city', '')} ({booking.get('origin', '')})", value_style)],
+        [Paragraph("To / À", header_style), Paragraph(f"{booking.get('destination_city', '')} ({booking.get('destination', '')})", value_style)],
+        [Paragraph("Flight / Vol", header_style), Paragraph(f"{booking.get('airline', '')} {booking.get('flight_number', '')}", value_style)],
+        [Paragraph("Date", header_style), Paragraph(booking.get('departure_date', ''), value_style)],
+        [Paragraph("Class / Classe", header_style), Paragraph(booking.get('tier', 'ECO'), value_style)],
+        [Paragraph("Price / Prix", header_style), Paragraph(f"{format_price(booking.get('price', 0))} XOF", value_style)],
+        [Paragraph("Payment / Paiement", header_style), Paragraph("MTN MoMo ✓", value_style)],
+        [Paragraph("Reference", header_style), Paragraph(f"<b>{booking_ref}</b>", ParagraphStyle('Ref', fontSize=14, textColor=colors.HexColor('#6C63FF')))],
     ]
     
     table = Table(ticket_data, colWidths=[100*mm, 80*mm])
     table.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#6C63FF')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('SPAN', (1, 0), (1, 1)),  # QR code spans 2 rows
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, 0), 14),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-        ('TOPPADDING', (0, 0), (-1, 0), 12),
+        ('SPAN', (1, 0), (1, 1)),
         ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#F8FAFC')),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#E2E8F0')),
         ('TOPPADDING', (0, 2), (-1, -1), 8),
         ('BOTTOMPADDING', (0, 2), (-1, -1), 8),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
     ]))
     
     elements.append(table)
     elements.append(Spacer(1, 20))
+    elements.append(Paragraph("Scannez le QR code pour vérifier / Scan QR to verify", 
+                              ParagraphStyle('Footer', fontSize=9, textColor=colors.gray, alignment=TA_CENTER)))
+    elements.append(Paragraph("Merci d'avoir choisi Travelio! / Thank you for choosing Travelio! 🌍", 
+                              ParagraphStyle('Footer2', fontSize=9, textColor=colors.gray, alignment=TA_CENTER)))
     
-    # Footer
-    footer_style = ParagraphStyle('Footer', fontSize=9, textColor=colors.HexColor('#94A3B8'), alignment=TA_CENTER)
-    elements.append(Paragraph("Scan QR code to verify ticket", footer_style))
-    elements.append(Paragraph("Thank you for choosing Travelio! / Merci d'avoir choisi Travelio!", footer_style))
-    
-    # Build PDF
     doc.build(elements)
-    
     return filename
 
-# ========== AI INTENT PARSING ==========
+# ========== CONVERSATION HANDLERS ==========
 
-async def parse_travel_intent(text: str, language: str = "fr") -> TravelIntent:
-    """Parse travel intent using Claude Sonnet 4.5"""
-    try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-        
-        api_key = os.environ.get('EMERGENT_LLM_KEY')
-        if not api_key:
-            logger.warning("No EMERGENT_LLM_KEY found, using fallback parsing")
-            return fallback_parse_intent(text, language)
-        
-        system_prompt = """You are a travel intent parser. Extract travel details from user messages.
-        
-Return a JSON object with these fields (use null for missing values):
-- destination: city name (string)
-- origin: city name, default to "Dakar" if not mentioned (string)
-- departure_date: date in YYYY-MM-DD format (string)
-- return_date: date in YYYY-MM-DD format or null for one-way (string)
-- budget: numeric amount in local currency XOF (number)
-- passengers: number of travelers, default 1 (number)
-- travel_class: "economy", "business", or "first" (string)
+def get_welcome_message(language: str) -> str:
+    """Get welcome message"""
+    if language == "fr":
+        return """✈️ *Bienvenue sur Travelio!*
 
-Parse relative dates like "next Friday" based on today's date.
-Convert budget mentions like "$200" or "200 dollars" to XOF (1 USD ≈ 600 XOF).
-Understand both French and English.
+Je suis votre assistant de voyage. Dites-moi simplement où vous voulez aller!
 
-Today's date is: """ + datetime.now().strftime("%Y-%m-%d") + """
+Exemple: "Je veux aller à Dakar vendredi prochain pour 100 000 francs"
 
-ONLY respond with valid JSON, no explanation."""
+🌍 Destinations: Dakar, Lagos, Accra, Abidjan, Bamako, Ouagadougou, Conakry, Niamey, Cotonou, Lomé"""
+    else:
+        return """✈️ *Welcome to Travelio!*
 
-        chat = LlmChat(
-            api_key=api_key,
-            session_id=f"intent-{uuid.uuid4()}",
-            system_message=system_prompt
-        ).with_model("anthropic", "claude-sonnet-4-5-20250929")
-        
-        user_message = UserMessage(text=text)
-        response = await chat.send_message(user_message)
-        
-        try:
-            response_text = response.strip()
-            if response_text.startswith("```"):
-                response_text = response_text.split("```")[1]
-                if response_text.startswith("json"):
-                    response_text = response_text[4:]
-            
-            parsed = json.loads(response_text)
-            return TravelIntent(
-                destination=parsed.get("destination"),
-                origin=parsed.get("origin", "Dakar"),
-                departure_date=parsed.get("departure_date"),
-                return_date=parsed.get("return_date"),
-                budget=parsed.get("budget"),
-                passengers=parsed.get("passengers", 1),
-                travel_class=parsed.get("travel_class", "economy"),
-                language=language
-            )
-        except json.JSONDecodeError:
-            logger.error(f"Failed to parse AI response: {response}")
-            return fallback_parse_intent(text, language)
-            
-    except Exception as e:
-        logger.error(f"AI parsing error: {e}")
-        return fallback_parse_intent(text, language)
+I'm your travel assistant. Just tell me where you want to go!
 
-def fallback_parse_intent(text: str, language: str = "fr") -> TravelIntent:
-    """Simple fallback parser when AI is unavailable"""
-    import re
-    text_lower = text.lower()
+Example: "I want to fly to Lagos next Friday under $200"
+
+🌍 Destinations: Dakar, Lagos, Accra, Abidjan, Bamako, Ouagadougou, Conakry, Niamey, Cotonou, Lomé"""
+
+def format_flight_options(flights: List[Dict], language: str) -> str:
+    """Format flight options for WhatsApp"""
+    if language == "fr":
+        header = "✈️ *Voici vos options de vol:*\n\n"
+        footer = "\n\n💬 Répondez avec le numéro (1, 2, ou 3) pour réserver"
+    else:
+        header = "✈️ *Here are your flight options:*\n\n"
+        footer = "\n\n💬 Reply with the number (1, 2, or 3) to book"
     
-    destination = None
-    for city in WEST_AFRICAN_CITIES.keys():
-        if city.lower() in text_lower:
-            destination = city
-            break
+    options = []
+    for flight in flights:
+        tier_label = flight.get(f'tier_label_{language}', flight.get('tier', ''))
+        demo = " 🔸Demo" if flight.get('is_demo') else ""
+        
+        option = f"""*Option {flight['option_number']}* - {tier_label}{demo}
+🛫 {flight['airline']} {flight['flight_number']}
+📍 {flight.get('origin_city', flight['origin'])} → {flight.get('destination_city', flight['destination'])}
+⏰ {flight['duration']} {'(1 escale)' if flight.get('stops', 0) > 0 else '(direct)'}
+💰 *{format_price(flight['price'])} XOF*"""
+        options.append(option)
     
-    budget = None
-    budget_match = re.search(r'(\d+)\s*(dollars?|\$|usd|xof|fcfa)', text_lower)
-    if budget_match:
-        amount = int(budget_match.group(1))
-        currency = budget_match.group(2)
-        if currency in ['dollars', '$', 'usd', 'dollar']:
-            budget = amount * 600
+    return header + "\n\n".join(options) + footer
+
+def format_payment_request(flight: Dict, language: str) -> str:
+    """Format payment confirmation request"""
+    if language == "fr":
+        return f"""✅ *Vol sélectionné:*
+
+🛫 {flight['airline']} {flight['flight_number']}
+📍 {flight.get('origin_city', flight['origin'])} → {flight.get('destination_city', flight['destination'])}
+📅 {flight.get('departure_time', '').split('T')[0]}
+💰 *{format_price(flight['price'])} XOF*
+
+📱 *Paiement MTN MoMo*
+Répondez *OUI* pour payer maintenant
+Répondez *NON* pour annuler"""
+    else:
+        return f"""✅ *Selected flight:*
+
+🛫 {flight['airline']} {flight['flight_number']}
+📍 {flight.get('origin_city', flight['origin'])} → {flight.get('destination_city', flight['destination'])}
+📅 {flight.get('departure_time', '').split('T')[0]}
+💰 *{format_price(flight['price'])} XOF*
+
+📱 *MTN MoMo Payment*
+Reply *YES* to pay now
+Reply *NO* to cancel"""
+
+def format_payment_initiated(booking_ref: str, language: str, is_simulated: bool) -> str:
+    """Format payment initiated message"""
+    sim_note = "\n\n🔸 _Mode simulation - Paiement auto-approuvé_" if is_simulated else ""
+    sim_note_en = "\n\n🔸 _Simulation mode - Payment auto-approved_" if is_simulated else ""
+    
+    if language == "fr":
+        return f"""💳 *Paiement en cours...*
+
+📲 Une demande de paiement a été envoyée sur votre téléphone MTN.
+
+1️⃣ Ouvrez l'application MTN MoMo
+2️⃣ Approuvez le paiement
+3️⃣ Entrez votre code PIN
+
+Référence: {booking_ref}
+
+⏳ En attente de confirmation...{sim_note}"""
+    else:
+        return f"""💳 *Processing payment...*
+
+📲 A payment request has been sent to your MTN phone.
+
+1️⃣ Open MTN MoMo app
+2️⃣ Approve the payment
+3️⃣ Enter your PIN
+
+Reference: {booking_ref}
+
+⏳ Waiting for confirmation...{sim_note_en}"""
+
+def format_booking_confirmed(booking: Dict, language: str) -> str:
+    """Format booking confirmation message"""
+    if language == "fr":
+        return f"""🎉 *Réservation Confirmée!*
+
+✅ Votre billet est prêt!
+
+📋 *Détails:*
+• Référence: *{booking['booking_ref']}*
+• Vol: {booking['airline']} {booking['flight_number']}
+• Route: {booking.get('origin_city', booking['origin'])} → {booking.get('destination_city', booking['destination'])}
+• Date: {booking.get('departure_date', '')}
+• Prix: {format_price(booking['price'])} XOF
+
+📄 Votre billet PDF arrive dans quelques secondes...
+
+Bon voyage! ✈️🌍"""
+    else:
+        return f"""🎉 *Booking Confirmed!*
+
+✅ Your ticket is ready!
+
+📋 *Details:*
+• Reference: *{booking['booking_ref']}*
+• Flight: {booking['airline']} {booking['flight_number']}
+• Route: {booking.get('origin_city', booking['origin'])} → {booking.get('destination_city', booking['destination'])}
+• Date: {booking.get('departure_date', '')}
+• Price: {format_price(booking['price'])} XOF
+
+📄 Your PDF ticket is coming in a few seconds...
+
+Have a great trip! ✈️🌍"""
+
+async def handle_message(phone: str, message_text: str, message_type: str = "text"):
+    """Main message handler - the brain of the conversational agent"""
+    session = await get_or_create_session(phone)
+    text = message_text.strip().lower()
+    original_text = message_text.strip()
+    
+    # Detect language from first message or use session language
+    if session.state == ConversationState.IDLE:
+        session.language = detect_language(original_text)
+    
+    lang = session.language
+    
+    # Handle commands
+    if text in ["start", "bonjour", "hello", "hi", "salut", "aide", "help"]:
+        await clear_session(phone)
+        await send_whatsapp_message(phone, get_welcome_message(lang))
+        return
+    
+    if text in ["annuler", "cancel", "reset", "stop"]:
+        await clear_session(phone)
+        msg = "❌ Réservation annulée. Envoyez un message pour recommencer." if lang == "fr" else "❌ Booking cancelled. Send a message to start again."
+        await send_whatsapp_message(phone, msg)
+        return
+    
+    # State machine
+    if session.state == ConversationState.IDLE:
+        # Parse travel intent
+        intent = await parse_travel_intent(original_text, lang)
+        
+        if not intent.get("destination"):
+            msg = "🤔 Je n'ai pas compris votre destination. Essayez: 'Je veux aller à Dakar vendredi'" if lang == "fr" else "🤔 I didn't understand your destination. Try: 'I want to fly to Lagos on Friday'"
+            await send_whatsapp_message(phone, msg)
+            return
+        
+        # Search flights
+        flights = await search_flights(
+            intent.get("origin", "Dakar"),
+            intent["destination"],
+            intent.get("departure_date", (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")),
+            intent.get("budget")
+        )
+        
+        if not flights:
+            msg = "😔 Aucun vol trouvé. Essayez une autre destination." if lang == "fr" else "😔 No flights found. Try another destination."
+            await send_whatsapp_message(phone, msg)
+            return
+        
+        # Update session
+        await update_session(phone, {
+            "state": ConversationState.AWAITING_FLIGHT_SELECTION,
+            "language": lang,
+            "intent": intent,
+            "flights": flights
+        })
+        
+        # Send flight options
+        await send_whatsapp_message(phone, format_flight_options(flights, lang))
+        
+    elif session.state == ConversationState.AWAITING_FLIGHT_SELECTION:
+        # User selecting a flight
+        flights = session.flights or []
+        
+        # Try to parse selection
+        selection = None
+        if text in ["1", "one", "un", "premier", "first", "option 1"]:
+            selection = 0
+        elif text in ["2", "two", "deux", "deuxième", "second", "option 2"]:
+            selection = 1
+        elif text in ["3", "three", "trois", "troisième", "third", "option 3"]:
+            selection = 2
+        
+        if selection is None or selection >= len(flights):
+            msg = "❓ Répondez 1, 2 ou 3 pour choisir un vol" if lang == "fr" else "❓ Reply 1, 2, or 3 to select a flight"
+            await send_whatsapp_message(phone, msg)
+            return
+        
+        selected_flight = flights[selection]
+        
+        await update_session(phone, {
+            "state": ConversationState.AWAITING_PAYMENT_CONFIRMATION,
+            "selected_flight": selected_flight
+        })
+        
+        await send_whatsapp_message(phone, format_payment_request(selected_flight, lang))
+        
+    elif session.state == ConversationState.AWAITING_PAYMENT_CONFIRMATION:
+        # User confirming payment
+        if text in ["oui", "yes", "ok", "payer", "pay", "confirmer", "confirm", "o", "y"]:
+            selected_flight = session.selected_flight
+            
+            if not selected_flight:
+                await clear_session(phone)
+                msg = "❌ Session expirée. Recommencez." if lang == "fr" else "❌ Session expired. Start again."
+                await send_whatsapp_message(phone, msg)
+                return
+            
+            # Create booking
+            booking_ref = generate_booking_ref()
+            booking = {
+                "id": str(uuid.uuid4()),
+                "booking_ref": booking_ref,
+                "phone": phone,
+                "passenger_name": phone,  # In real app, ask for name
+                "airline": selected_flight["airline"],
+                "flight_number": selected_flight["flight_number"],
+                "origin": selected_flight["origin"],
+                "origin_city": selected_flight.get("origin_city", selected_flight["origin"]),
+                "destination": selected_flight["destination"],
+                "destination_city": selected_flight.get("destination_city", selected_flight["destination"]),
+                "departure_date": selected_flight.get("departure_time", "").split("T")[0],
+                "departure_time": selected_flight.get("departure_time", ""),
+                "price": selected_flight["price"],
+                "tier": selected_flight.get("tier", "ECO"),
+                "status": "pending_payment",
+                "created_at": datetime.now(timezone.utc).isoformat()
+            }
+            
+            await db.bookings.insert_one(booking)
+            
+            # Initiate MoMo payment
+            payment_result = await initiate_momo_payment(phone, selected_flight["price"], booking_ref)
+            
+            await update_session(phone, {
+                "state": ConversationState.AWAITING_MOMO_APPROVAL,
+                "booking_id": booking["id"],
+                "payment_reference": payment_result["reference_id"]
+            })
+            
+            await send_whatsapp_message(phone, format_payment_initiated(booking_ref, lang, payment_result.get("is_simulated", False)))
+            
+            # Start payment status check (in background)
+            asyncio.create_task(poll_payment_and_complete(phone, booking, payment_result["reference_id"], lang))
+            
+        elif text in ["non", "no", "annuler", "cancel", "n"]:
+            await clear_session(phone)
+            msg = "❌ Réservation annulée. Envoyez un message pour recommencer." if lang == "fr" else "❌ Booking cancelled. Send a message to start again."
+            await send_whatsapp_message(phone, msg)
         else:
-            budget = amount
-    
-    today = datetime.now()
-    next_week = today + timedelta(days=7)
-    
-    return TravelIntent(
-        destination=destination or "Abidjan",
-        origin="Dakar",
-        departure_date=next_week.strftime("%Y-%m-%d"),
-        return_date=None,
-        budget=budget,
-        passengers=1,
-        travel_class="economy",
-        language=language
-    )
+            msg = "❓ Répondez OUI pour payer ou NON pour annuler" if lang == "fr" else "❓ Reply YES to pay or NO to cancel"
+            await send_whatsapp_message(phone, msg)
+            
+    elif session.state == ConversationState.AWAITING_MOMO_APPROVAL:
+        # User waiting for MoMo - just acknowledge
+        msg = "⏳ Paiement en cours... Veuillez approuver sur votre téléphone MTN" if lang == "fr" else "⏳ Payment in progress... Please approve on your MTN phone"
+        await send_whatsapp_message(phone, msg)
 
-# ========== API ROUTES ==========
+async def poll_payment_and_complete(phone: str, booking: Dict, reference_id: str, language: str):
+    """Poll payment status and complete booking"""
+    max_attempts = 10
+    
+    for attempt in range(max_attempts):
+        await asyncio.sleep(3)  # Wait 3 seconds between polls
+        
+        status = await check_momo_status(reference_id)
+        
+        if status == "SUCCESSFUL":
+            # Update booking
+            await db.bookings.update_one(
+                {"id": booking["id"]},
+                {"$set": {"status": "confirmed", "payment_status": "completed"}}
+            )
+            
+            # Generate ticket
+            ticket_filename = generate_ticket_pdf(booking)
+            
+            # Send confirmation
+            await send_whatsapp_message(phone, format_booking_confirmed(booking, language))
+            
+            # Send PDF ticket
+            base_url = os.environ.get('APP_BASE_URL', 'https://voice-travel-booking.preview.emergentagent.com')
+            ticket_url = f"{base_url}/api/tickets/{ticket_filename}"
+            
+            await asyncio.sleep(2)
+            await send_whatsapp_document(
+                phone,
+                ticket_url,
+                ticket_filename,
+                f"🎫 Travelio Ticket - {booking['booking_ref']}"
+            )
+            
+            # Clear session
+            await clear_session(phone)
+            return
+            
+        elif status == "FAILED":
+            await db.bookings.update_one(
+                {"id": booking["id"]},
+                {"$set": {"status": "payment_failed"}}
+            )
+            
+            msg = "❌ Paiement échoué. Réessayez en envoyant un nouveau message." if language == "fr" else "❌ Payment failed. Try again by sending a new message."
+            await send_whatsapp_message(phone, msg)
+            await clear_session(phone)
+            return
+    
+    # Timeout
+    msg = "⏰ Délai dépassé. Le paiement n'a pas été confirmé. Réessayez." if language == "fr" else "⏰ Timeout. Payment was not confirmed. Please try again."
+    await send_whatsapp_message(phone, msg)
+    await clear_session(phone)
+
+# ========== WEBHOOK ROUTES ==========
+
+@api_router.get("/webhook")
+async def verify_webhook(request: Request):
+    """WhatsApp webhook verification"""
+    params = dict(request.query_params)
+    
+    mode = params.get("hub.mode")
+    token = params.get("hub.verify_token")
+    challenge = params.get("hub.challenge")
+    
+    if mode == "subscribe" and token == WHATSAPP_VERIFY_TOKEN:
+        logger.info("Webhook verified successfully")
+        return JSONResponse(content=int(challenge), media_type="text/plain")
+    
+    raise HTTPException(status_code=403, detail="Verification failed")
+
+@api_router.post("/webhook")
+async def receive_webhook(request: Request, background_tasks: BackgroundTasks):
+    """Receive WhatsApp messages"""
+    try:
+        body = await request.json()
+        logger.info(f"Webhook received: {json.dumps(body)[:500]}")
+        
+        # Extract message
+        entry = body.get("entry", [{}])[0]
+        changes = entry.get("changes", [{}])[0]
+        value = changes.get("value", {})
+        messages = value.get("messages", [])
+        
+        for message in messages:
+            phone = message.get("from", "")
+            msg_type = message.get("type", "text")
+            
+            # Extract text
+            if msg_type == "text":
+                text = message.get("text", {}).get("body", "")
+            elif msg_type == "interactive":
+                # Button reply
+                interactive = message.get("interactive", {})
+                if interactive.get("type") == "button_reply":
+                    text = interactive.get("button_reply", {}).get("id", "")
+                else:
+                    text = interactive.get("list_reply", {}).get("id", "")
+            elif msg_type == "audio":
+                # Voice message - would need transcription
+                # For now, send a message asking for text
+                await send_whatsapp_message(phone, "🎤 Les messages vocaux seront bientôt supportés. Veuillez taper votre message. / Voice messages coming soon. Please type your message.")
+                continue
+            else:
+                continue
+            
+            if phone and text:
+                # Process in background to respond quickly
+                background_tasks.add_task(handle_message, phone, text, msg_type)
+        
+        return {"status": "ok"}
+        
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+        return {"status": "error", "message": str(e)}
+
+# ========== OTHER API ROUTES ==========
 
 @api_router.get("/")
 async def root():
-    return {"message": "Travelio API", "version": "2.0.0"}
+    return {"message": "Travelio WhatsApp Agent", "version": "3.0.0"}
 
 @api_router.get("/health")
 async def health():
-    return {"status": "healthy"}
+    return {"status": "healthy", "type": "whatsapp_agent"}
 
-# Intent Parsing
-@api_router.post("/parse-intent", response_model=TravelIntent)
-async def parse_intent(request: IntentParseRequest):
-    """Parse user text/voice input into structured travel intent"""
-    intent = await parse_travel_intent(request.text, request.language)
-    return intent
-
-# Flight Search
-@api_router.post("/flights/search", response_model=List[Flight])
-async def search_flights(request: FlightSearchRequest):
-    """Search for available flights"""
-    # Try real API first
-    raw_flights = await search_flights_aviationstack(
-        request.origin,
-        request.destination,
-        request.departure_date
-    )
-    
-    if raw_flights:
-        flights = transform_aviationstack_flights(raw_flights, request.budget)
-        if flights:
-            return flights
-    
-    # Fallback to mock data
-    logger.info("Using mock flight data")
-    return generate_mock_flights(
-        origin=request.origin,
-        destination=request.destination,
-        date=request.departure_date,
-        budget=request.budget
-    )
-
-# User Profiles
-@api_router.post("/users", response_model=UserProfile)
-async def create_user(user: UserProfileCreate):
-    """Create a new user profile"""
-    user_obj = UserProfile(**user.model_dump())
-    doc = user_obj.model_dump()
-    doc['created_at'] = doc['created_at'].isoformat()
-    await db.users.insert_one(doc)
-    return user_obj
-
-@api_router.get("/users/{user_id}", response_model=UserProfile)
-async def get_user(user_id: str):
-    """Get user profile by ID"""
-    user = await db.users.find_one({"id": user_id}, {"_id": 0})
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    if isinstance(user.get('created_at'), str):
-        user['created_at'] = datetime.fromisoformat(user['created_at'])
-    return UserProfile(**user)
-
-@api_router.post("/users/bulk", response_model=List[UserProfile])
-async def create_users_bulk(users: List[UserProfileCreate]):
-    """Create multiple users from JSON upload"""
-    created = []
-    for user_data in users:
-        user_obj = UserProfile(**user_data.model_dump())
-        doc = user_obj.model_dump()
-        doc['created_at'] = doc['created_at'].isoformat()
-        await db.users.insert_one(doc)
-        created.append(user_obj)
-    return created
-
-# Bookings
-@api_router.post("/bookings")
-async def create_booking(request: BookingCreate):
-    """Create a new booking"""
-    flight_data = request.flight_data
-    booking_ref = generate_booking_ref()
-    
-    booking = Booking(
-        booking_ref=booking_ref,
-        user_id=request.user_id,
-        flight_id=request.flight_id,
-        airline=flight_data.get('airline', 'Unknown'),
-        flight_number=flight_data.get('flight_number', 'XX000'),
-        origin=flight_data.get('origin', 'DSS'),
-        destination=flight_data.get('destination', 'ABJ'),
-        departure_time=flight_data.get('departure_time', ''),
-        arrival_time=flight_data.get('arrival_time', ''),
-        return_date=request.return_date,
-        price=flight_data.get('price', 0) * request.passengers,
-        passengers=request.passengers,
-        travel_class=request.travel_class,
-        passenger_name=request.passenger_name,
-        payment_method="pending",
-        qr_code=booking_ref
-    )
-    
-    doc = booking.model_dump()
-    doc['created_at'] = doc['created_at'].isoformat()
-    await db.bookings.insert_one(doc)
-    
-    return {
-        "id": booking.id,
-        "booking_ref": booking_ref,
-        "status": booking.status,
-        "price": booking.price,
-        "currency": booking.currency
-    }
-
-@api_router.get("/bookings/user/{user_id}")
-async def get_user_bookings(user_id: str):
-    """Get all bookings for a user"""
-    bookings = await db.bookings.find({"user_id": user_id}, {"_id": 0}).to_list(100)
-    for booking in bookings:
-        if isinstance(booking.get('created_at'), str):
-            booking['created_at'] = datetime.fromisoformat(booking['created_at'])
-    return bookings
-
-@api_router.get("/bookings/{booking_id}")
-async def get_booking(booking_id: str):
-    """Get booking details by ID"""
-    booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
-    if not booking:
-        raise HTTPException(status_code=404, detail="Booking not found")
-    if isinstance(booking.get('created_at'), str):
-        booking['created_at'] = datetime.fromisoformat(booking['created_at'])
-    return booking
-
-# Payments
-@api_router.post("/payments/initiate")
-async def initiate_payment(request: PaymentRequest):
-    """Initiate payment for a booking"""
-    # Get booking
-    booking = await db.bookings.find_one({"id": request.booking_id}, {"_id": 0})
-    if not booking:
-        raise HTTPException(status_code=404, detail="Booking not found")
-    
-    booking_ref = booking.get('booking_ref', booking.get('qr_code', 'TRV-000000'))
-    
-    if request.payment_method == "momo":
-        result = await initiate_momo_payment(request.amount, request.phone_number, booking_ref)
-    elif request.payment_method in ["google", "apple"]:
-        # Simulate Google Pay / Apple Pay (instant success)
-        result = {
-            "status": "success",
-            "reference_id": f"{'GPAY' if request.payment_method == 'google' else 'APAY'}-{uuid.uuid4().hex[:12].upper()}",
-            "message": "Payment successful"
-        }
-    else:
-        raise HTTPException(status_code=400, detail="Invalid payment method")
-    
-    # Update booking with payment reference
-    if result.get("reference_id"):
-        await db.bookings.update_one(
-            {"id": request.booking_id},
-            {"$set": {
-                "payment_reference": result["reference_id"],
-                "payment_method": request.payment_method,
-                "payment_status": "pending" if result["status"] == "pending" else "completed"
-            }}
-        )
-    
-    return result
-
-@api_router.post("/payments/status")
-async def check_payment_status(request: PaymentStatusRequest):
-    """Check payment status (for MoMo polling)"""
-    # Check if it's a simulated payment
-    if request.payment_reference.startswith("SIM-"):
-        # Simulate success after a delay
-        return {
-            "status": "SUCCESSFUL",
-            "is_simulated": True
-        }
-    
-    result = await check_momo_payment_status(request.payment_reference)
-    return result
-
-@api_router.post("/payments/complete")
-async def complete_payment(booking_id: str, payment_reference: str, background_tasks: BackgroundTasks):
-    """Complete payment and generate ticket"""
-    # Get booking
-    booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
-    if not booking:
-        raise HTTPException(status_code=404, detail="Booking not found")
-    
-    # Get user
-    user = await db.users.find_one({"id": booking.get("user_id")}, {"_id": 0})
-    if not user:
-        user = {"first_name": "Guest", "last_name": "User"}
-    
-    # Generate PDF ticket
-    ticket_filename = generate_ticket_pdf(booking, user)
-    ticket_url = f"/api/tickets/{ticket_filename}"
-    
-    # Update booking
-    await db.bookings.update_one(
-        {"id": booking_id},
-        {"$set": {
-            "status": "confirmed",
-            "payment_status": "completed",
-            "ticket_url": ticket_url
-        }}
-    )
-    
-    # Fetch updated booking
-    updated_booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
-    
-    return {
-        "status": "success",
-        "booking": updated_booking,
-        "ticket_url": ticket_url
-    }
-
-# Legacy payment endpoints for backward compatibility
-@api_router.post("/payments/momo")
-async def process_momo_payment(request: PaymentRequest):
-    """Process MTN MoMo payment (legacy endpoint)"""
-    return await initiate_payment(request)
-
-@api_router.post("/payments/google-pay")
-async def process_google_pay(request: PaymentRequest):
-    """Process Google Pay payment"""
-    request.payment_method = "google"
-    return await initiate_payment(request)
-
-@api_router.post("/payments/apple-pay")
-async def process_apple_pay(request: PaymentRequest):
-    """Process Apple Pay payment"""
-    request.payment_method = "apple"
-    return await initiate_payment(request)
-
-# MoMo Callback
-@api_router.post("/momo/callback")
-async def momo_callback(request: MomoCallbackRequest):
-    """Handle MTN MoMo payment callback"""
-    logger.info(f"MoMo callback received: {request.referenceId} - {request.status}")
-    
-    # Find booking by payment reference
-    booking = await db.bookings.find_one({"payment_reference": request.referenceId}, {"_id": 0})
-    
-    if booking:
-        new_status = "completed" if request.status == "SUCCESSFUL" else "failed"
-        await db.bookings.update_one(
-            {"payment_reference": request.referenceId},
-            {"$set": {"payment_status": new_status}}
-        )
-    
-    return {"received": True}
-
-# Tickets
 @api_router.get("/tickets/{filename}")
 async def get_ticket(filename: str):
-    """Download generated ticket PDF"""
+    """Serve ticket PDF"""
     filepath = TICKETS_DIR / filename
     if not filepath.exists():
         raise HTTPException(status_code=404, detail="Ticket not found")
     return FileResponse(filepath, media_type="application/pdf", filename=filename)
 
-# WhatsApp
-@api_router.post("/whatsapp/send-ticket")
-async def send_whatsapp_ticket(request: WhatsAppRequest):
-    """Send ticket via WhatsApp"""
-    booking = await db.bookings.find_one({"id": request.booking_id}, {"_id": 0})
+@api_router.get("/bookings/{booking_ref}")
+async def get_booking(booking_ref: str):
+    """Get booking by reference"""
+    booking = await db.bookings.find_one({"booking_ref": booking_ref}, {"_id": 0})
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
-    
-    booking_ref = booking.get('booking_ref', booking.get('qr_code', 'TRV-XXXXXX'))
-    ticket_url = booking.get('ticket_url')
-    
-    # Bilingual message
-    message = f"""✈️ Votre billet Travelio est prêt! / Your Travelio ticket is ready!
+    return booking
 
-📋 Référence / Reference: {booking_ref}
-🛫 {booking.get('origin', '')} → {booking.get('destination', '')}
-📅 {booking.get('departure_time', '').split('T')[0] if booking.get('departure_time') else ''}
+@api_router.get("/sessions/{phone}")
+async def get_session(phone: str):
+    """Get user session (for debugging)"""
+    session = await db.sessions.find_one({"phone": phone}, {"_id": 0})
+    return session or {"status": "no session"}
 
-Bon voyage! / Have a great trip! 🌍"""
-    
-    # Get full ticket URL for WhatsApp
-    base_url = os.environ.get('MOMO_CALLBACK_URL', '').replace('/api/momo/callback', '')
-    full_ticket_url = f"{base_url}{ticket_url}" if ticket_url and base_url else None
-    
-    result = await send_whatsapp_message(request.phone_number, message, full_ticket_url)
-    
-    return {
-        "status": result.get("status", "sent"),
-        "message": result.get("message", "Ticket sent"),
-        "booking_ref": booking_ref,
-        "ticket_url": ticket_url
-    }
+# Test endpoint to simulate incoming message
+@api_router.post("/test/message")
+async def test_message(phone: str, message: str):
+    """Test endpoint to simulate WhatsApp message"""
+    await handle_message(phone, message, "text")
+    session = await db.sessions.find_one({"phone": phone}, {"_id": 0})
+    return {"status": "processed", "session_state": session.get("state") if session else "none"}
 
-# Cities endpoint
-@api_router.get("/cities")
-async def get_cities():
-    """Get list of supported West African cities"""
-    return [{"name": city, "code": code} for city, code in WEST_AFRICAN_CITIES.items()]
-
-# Include the router in the main app
+# Include the router
 app.include_router(api_router)
 
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
