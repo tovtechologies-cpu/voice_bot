@@ -1,119 +1,66 @@
 # Travelio PRD - WhatsApp Travel Booking Agent
 
 ## Original Problem Statement
-A WhatsApp conversational travel booking agent for Benin/West Africa. Users interact via WhatsApp to search flights, enroll passengers, book tickets, pay (MoMo/Moov/Stripe), and manage cancellations/refunds.
+Voice-first WhatsApp conversational agent for travel booking (Travelio), targeting Benin/West Africa.
+Users interact exclusively via WhatsApp to search, book, and pay for flights.
 
-## Architecture (v7.0 - Modular)
-```
-/app/backend/
-├── server.py (85 lines - slim FastAPI entry point)
-├── config.py (All env vars, constants, airport codes)
-├── database.py (MongoDB connection)
-├── models.py (ConversationState, fare profiles)
-├── services/
-│   ├── security.py (AES-256-GCM encryption, rate limiting, velocity checks)
-│   ├── flight.py (Duffel GDS + sandbox mock)
-│   ├── airport.py (Fuzzy airport recognition with rapidfuzz)
-│   ├── date_parser.py (Natural language date parsing with dateparser)
-│   ├── payment.py (MTN MoMo, Moov, Stripe)
-│   ├── ai.py (Claude intent parsing)
-│   ├── whatsapp.py (WhatsApp messaging + chunking)
-│   ├── passport.py (OCR via pytesseract)
-│   ├── whisper.py (Audio transcription)
-│   ├── ticket.py (PDF generation with QR)
-│   └── session.py (Session + passenger CRUD)
-├── conversation/
-│   ├── handler.py (Main message dispatcher)
-│   ├── enrollment.py (User enrollment flows)
-│   ├── booking.py (Destination, date, flight, payment)
-│   ├── cancellation.py (Cancel/refund)
-│   └── modification.py (Modify booking)
-├── routes/
-│   ├── webhook.py (WhatsApp webhook)
-│   ├── payments.py (Payment callbacks + page)
-│   ├── legal.py (Terms of Service, Privacy Policy)
-│   ├── health.py (Health + root)
-│   └── test.py (Test simulation)
-└── utils/
-    ├── formatting.py (Message formatting)
-    └── helpers.py (Booking ref, phone masking)
-```
+## Architecture
+- Backend: FastAPI (Python), modular structure (services/, conversation/, routes/, utils/)
+- Database: MongoDB (Motor async driver)
+- Frontend: React (admin status dashboard only, not user-facing)
+- AI: Claude Sonnet 4.5 (intent parsing), OpenAI Whisper (voice transcription)
+- GDS: Duffel API (sandbox/mock mode)
+- Payments: MTN MoMo, Moov Money, Stripe (Google Pay/Apple Pay) — all simulated
+- Security: AES-256-GCM encryption, rate limiting, webhook signature verification
 
 ## What's Been Implemented
 
-### v7.0 (Feb 2026) - Major Refactoring + New Features
-- Refactored monolithic server.py (3632 lines) into 20+ modular files (85 lines)
-- Migrated GDS from Amadeus to Duffel (sandbox mock with auto-detection)
-- AES-256-GCM encryption for passenger PII (passport, DOB, expiry) at rest and in transit
-- Rate limiting (30 msg/min, 5 payments/5min, 10 enrollments/10min)
-- Payment velocity checks (max 3/hour)
-- Fuzzy airport recognition with rapidfuzz (handles misspellings)
-- Natural language date parsing with dateparser (French + English)
-- Legal endpoints: GET /api/legal/terms, GET /api/legal/privacy
-- Message chunking for >900 char WhatsApp messages
-- Data retention cron (auto-purge old sessions)
-- Frontend updated: Amadeus → Duffel GDS
+### v7.0 (Initial modular release)
+- Complete monolith-to-modular refactoring (server.py 3600+ lines → 85 lines)
+- Duffel API migration from Amadeus (sandbox fallback)
+- AES-256-GCM encryption for PII (passport, DOB, expiry)
+- Rate limiting (messages, payments, enrollment)
+- Legal endpoints (/legal/terms, /legal/privacy)
+- Airport recognition with RapidFuzz fuzzy matching
+- Natural language date parsing with dateparser
+- Full conversation state machine (32 states)
+- 4 payment operators with simulation
+- PDF ticket generation with QR code
+- Cancellation with 4 fare condition cases
+- Third-party passenger management (up to 5 profiles)
+- Frontend status dashboard
 
-### v6.0 - Refund & Cancellation
-- Full cancellation flow with fare condition verification
-- Pre-debit confirmation showing refund breakdown
-- Automated refund processing with fallback queue
-- Refund failed -> manual processing workflow
-
-### v5.0 - Passenger Enrollment
-- Passport OCR (pytesseract + Google Vision)
-- Manual entry with validation
-- Third-party passenger management (max 5)
-- Profile confirmation flow
-
-### v4.0 - Multi-Gateway Payment
-- MTN MoMo, Moov Money, Google Pay, Apple Pay
-- Payment polling with timeout
-- Retry and method-switch flows
-- PDF ticket generation with QR
-
-### v3.0 - Core
-- WhatsApp webhook integration
-- Claude AI intent parsing
-- OpenAI Whisper voice transcription
-- Flight search and categorization (3 options)
-- MongoDB session state machine
-
-## API Endpoints
-- POST /api/webhook (WhatsApp incoming)
-- GET /api/webhook (WhatsApp verification)
-- POST /api/test/simulate (Test simulation)
-- GET /api/health (Health check)
-- GET /api/ (Root info)
-- GET /api/legal/terms (Terms of Service)
-- GET /api/legal/privacy (Privacy Policy)
-- POST /api/momo/callback, /api/moov/callback, /api/stripe/webhook
-- GET /api/pay/{booking_id} (Payment page)
-- GET /api/tickets/{filename} (PDF download)
-- GET /api/verify_qr/{booking_ref} (QR verification)
+### v7.1 (Security & compliance update — Feb 2026)
+- P0.1: WhatsApp webhook signature verification (X-Hub-Signature-256 / HMAC-SHA256)
+- P0.2: Duffel environment-aware mode switching (PRODUCTION/SANDBOX/MOCK)
+- P0.3: Payment gateway environment-aware detection (auto-detect per operator)
+- P0.4: Enhanced health endpoint with webhook_security and environment_modes
+- P1.1: GDPR consent flow (AWAITING_CONSENT state wired up before enrollment)
+- P1.2: Modification flow fix (cancels original booking before rebooking)
+- P1.3: QR code passport removal (no more plaintext passport in QR data)
+- Startup mode logging for all services
+- Setup documentation: SETUP_WHATSAPP.md, SETUP_PAYMENTS.md, .env.example
+- Frontend dashboard: webhook security section, mock/sandbox/production/live status badges
 
 ## Prioritized Backlog
-### P0 (Done)
-- ✅ Duffel GDS Migration (sandbox)
-- ✅ Security & Encryption (AES-256-GCM)
-- ✅ Airport Recognition (rapidfuzz)
-- ✅ Date Picker (dateparser)
-- ✅ Legal Endpoints (ToS, Privacy)
-- ✅ UX (chunking, rate limiting)
-- ✅ Refactoring (modular architecture)
 
-### Audit (Feb 2026)
-- Complete 16-section technical audit report generated: /app/AUDIT_REPORT.md
+### P0 (Before production)
+- Configure real WhatsApp Business API (external Meta Console)
+- Replace Duffel sandbox key with real production key
+- Configure at least one real payment gateway
 
-### P1 (Remaining)
-- Natural language yes/no parsing improvements
-- Background message queue for heavy operations
-- XOF currency priority for Benin +229
+### P1
+- 24h flight reminder (scheduled notifications)
+- Round-trip flight support
+- Cabin class selection
+- Booking history view ("show my bookings" command)
+- Language switching mid-conversation
+- Profile editing and deletion
 
-### P2 (Future)
-- Configure real WhatsApp Business API in Meta Developer Console
-- Implement Celtiis Cash payment
-- Full multi-passenger booking
-- Production Duffel API key
-- Production MoMo/Moov/Stripe credentials
-- Replace Duffel sandbox mock with real API when key provided
+### P2
+- Celtiis Cash payment integration
+- Multi-passenger booking
+- XOF primary currency display for Benin users
+- Whisper correction dictionary
+- Caching for airport resolution and AI responses
+- Circuit breaker for external API calls
