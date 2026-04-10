@@ -9,22 +9,22 @@ const BottomNav = () => {
   const t = (key) => getTranslation(language, key);
 
   const navItems = [
-    { path: '/', icon: Home, label: t('home') },
-    { path: '/history', icon: Clock, label: t('trips') },
-    { path: '/profile', icon: User, label: t('profileNav') },
+    { path: '/', icon: Home, label: t('home'), testId: 'nav-home' },
+    { path: '/history', icon: Clock, label: t('trips'), testId: 'nav-trips' },
+    { path: '/profile', icon: User, label: t('profileNav'), testId: 'nav-profile' },
   ];
 
   return (
     <nav className="bottom-nav" data-testid="bottom-navigation">
       <div className="flex justify-around items-center max-w-md mx-auto">
-        {navItems.map(({ path, icon: Icon, label }) => (
+        {navItems.map(({ path, icon: Icon, label, testId }) => (
           <NavLink
             key={path}
             to={path}
             className={({ isActive }) => 
               `bottom-nav-item ${isActive ? 'active' : ''}`
             }
-            data-testid={`nav-${label.toLowerCase()}`}
+            data-testid={testId}
           >
             <Icon className="w-6 h-6 mb-1" />
             <span>{label}</span>
