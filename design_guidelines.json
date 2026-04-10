@@ -1,0 +1,116 @@
+{
+  "project_name": "Travelio",
+  "domain": "Voice-First Travel Booking / Premium Fintech",
+  "theme": "dark",
+  "archetype": "Archetype 5 (Jewel & Luxury) mixed with Tech Performance",
+  "overall_vibe": "Stripe meets Revolut meets premium African fintech. Dark, confident, fast, trustworthy.",
+  "design_principles": {
+    "emotion_first": "The app must feel lightning-fast, highly secure, and magical (AI parsing) using deep lighting, grain textures, and fluid motion.",
+    "zoom_in": "Focus entirely on the 80px Mic Button on the single screen. Do not clutter the landing experience.",
+    "contrast": "Deep navy background against electric violet/cyan gradients to draw the eye immediately to the core action."
+  },
+  "colors": {
+    "background": "#0A0F1E",
+    "surface": "#111827",
+    "primary_accent": "#6C63FF",
+    "secondary_accent": "#00D4FF",
+    "success": "#00E5A0",
+    "error": "#FF4D6D",
+    "text_primary": "#F8FAFC",
+    "text_secondary": "#94A3B8",
+    "gradients": {
+      "hero_gradient": "linear-gradient(135deg, #6C63FF 0%, #00D4FF 100%)",
+      "gradient_border": "linear-gradient(135deg, rgba(108,99,255,0.5) 0%, rgba(0,212,255,0.5) 100%)"
+    }
+  },
+  "typography": {
+    "font_family": "'Plus Jakarta Sans', sans-serif",
+    "headings": {
+      "weight": "700",
+      "letter_spacing": "-0.02em",
+      "color": "#F8FAFC",
+      "instruction": "Do not use Inter. Use tight tracking for headings. Maintain a heavy, premium feel for large text."
+    },
+    "body": {
+      "weight": "400",
+      "color": "#F8FAFC",
+      "secondary_color": "#94A3B8"
+    }
+  },
+  "surfaces_and_textures": {
+    "global_background": "Must include a subtle grain texture overlay. Use a fixed CSS noise background (opacity 0.03) combined with the #0A0F1E base to eliminate digital flatness.",
+    "glassmorphism": {
+      "background": "rgba(255, 255, 255, 0.05)",
+      "backdrop_filter": "blur(20px)",
+      "border": "1px solid rgba(255, 255, 255, 0.08)",
+      "instruction": "Use for Flight Cards and prominent modal surfaces. Apply a subtle backdrop-saturate to make it pop like crystal."
+    }
+  },
+  "spacing_and_layout": {
+    "mobile_first": true,
+    "tap_targets": "Minimum 48px height for all interactive elements. Buttons must be fully rounded.",
+    "navigation": "Bottom navigation bar layout for mobile. Ensure safe area padding at the bottom (e.g., pb-24).",
+    "alignment": "Center the mic button prominently. Align text and dense content (flight details) to the left for scanability."
+  },
+  "components": {
+    "mic_button": {
+      "size": "80px",
+      "shape": "rounded-full",
+      "background": "linear-gradient(135deg, #6C63FF 0%, #00D4FF 100%)",
+      "interaction": "Pulsing glow animation when recording. Must command attention.",
+      "data_testid": "mic-record-button"
+    },
+    "buttons": {
+      "border_radius": "100px",
+      "style": "Gradient fill or solid primary with hover glow effect.",
+      "data_testid": "primary-action-button"
+    },
+    "input_fields": {
+      "background": "#111827",
+      "focus_ring": "2px solid #6C63FF",
+      "border": "1px solid rgba(255,255,255,0.1)",
+      "data_testid": "text-input-field"
+    },
+    "flight_cards": {
+      "style": "Glassmorphism base.",
+      "accent": "Left border 3px solid #6C63FF to indicate selection or highlight.",
+      "data_testid": "flight-option-card"
+    },
+    "badges": {
+      "shape": "pill",
+      "border": "Gradient border (or subtle 1px border with background tint)",
+      "animation": "Fade-in slide-up animation. Only visible AFTER a value (date, destination) is assigned.",
+      "data_testid": "intent-badge"
+    }
+  },
+  "motion_and_interactions": {
+    "global_transition": "Fade + slight vertical slide (200ms ease) for mounting elements.",
+    "mic_active": "Pulse glow animation (0 0 0 0 rgba(108,99,255,0.7) -> 0 0 0 20px rgba(108,99,255,0)).",
+    "success_state": "Confetti particle effect when payment is successful.",
+    "flight_icon": "Airplane takeoff animation during search.",
+    "hover_states": "Interactive elements must have a visible hover state, usually an opacity bump or subtle glow box-shadow."
+  },
+  "icons_and_media": {
+    "icon_library": "lucide-react (or @phosphor-icons/react for duotone/premium feel). Use Phosphor if installing, otherwise stick to Lucide.",
+    "fallback_images": {
+      "dakar_skyline": "https://images.unsplash.com/photo-1758061329486-4f7b4a09d77d?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Njd8MHwxfHNlYXJjaHwxfHxEYWthciUyMHNreWxpbmUlMjBuaWdodHxlbnwwfHx8fDE3NzU4NDU0Njd8MA&ixlib=rb-4.1.0&q=85"
+    },
+    "instructions": "Do not use placeholders. Use SVG logos for MTN MoMo, Apple Pay, Google Pay."
+  },
+  "accessibility_and_testing": {
+    "data_testid_requirement": "All interactive and key informational elements MUST include a data-testid attribute using kebab-case role-based naming (e.g., flight-search-results, payment-submit-button).",
+    "contrast": "Ensure white text (#F8FAFC) on dark surface (#111827) meets AA accessibility.",
+    "focus": "All buttons and inputs must have distinct focus rings."
+  },
+  "instructions_to_main_agent": [
+    "Load 'Plus Jakarta Sans' from Google Fonts in the index.html or global CSS.",
+    "Create a global CSS class for the 'grain' overlay and apply it via a fixed pseudo-element over the body.",
+    "Implement the exact hex codes requested for background and surface elements. Do not deviate to default Tailwind grays.",
+    "Ensure the layout is entirely mobile-first: use max-w-md mx-auto for desktop viewing to simulate the mobile web app experience.",
+    "The 80px mic button is the hero of the app. Ensure its animation is smooth and performant.",
+    "Use standard HTML5 Web Speech API for the mic functionality.",
+    "All interactive elements must be fully rounded (rounded-full).",
+    "Never use purely transparent headers/navs; apply backdrop-blur if content scrolls underneath.",
+    "Make sure the bilingual setup (French/English) maps UI text cleanly without breaking the layout."
+  ]
+}
