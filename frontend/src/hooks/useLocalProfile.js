@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 
-const PROFILE_KEY = 'travelio_user_profile';
-const USER_ID_KEY = 'travelio_user_id';
+const PROFILE_KEY = 'travelioo_user_profile';
+const USER_ID_KEY = 'travelioo_user_id';
 
 export const useLocalProfile = () => {
   const [profile, setProfile] = useState(null);

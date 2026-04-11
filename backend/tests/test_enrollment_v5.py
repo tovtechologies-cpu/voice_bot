@@ -1,5 +1,5 @@
 """
-Travelio v5.0 - Enrollment & Passenger Management Tests
+Travelioo v5.0 - Enrollment & Passenger Management Tests
 Tests: New user enrollment, manual enrollment, profile confirmation, returning user flow,
 self booking, third-party booking, saved third-party selection, multi-passenger stub,
 session expiry, input validation, passport skip, global cancel, booking passenger fields,
@@ -345,7 +345,7 @@ class TestSelfBookingFlow:
         # Check booking was created with passenger data
         booking_ref = session.get("booking_ref")
         if booking_ref:
-            ticket_filename = f"travelio_ticket_{booking_ref}.pdf"
+            ticket_filename = f"travelioo_ticket_{booking_ref}.pdf"
             ticket_response = requests.get(f"{BASE_URL}/api/tickets/{ticket_filename}")
             if ticket_response.status_code == 200:
                 print(f"✓ Ticket generated: {ticket_filename}")

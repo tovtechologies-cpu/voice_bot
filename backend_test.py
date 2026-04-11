@@ -8,7 +8,7 @@ import os
 from datetime import datetime, timedelta
 import uuid
 
-class TravelioWhatsAppTester:
+class TraveliooWhatsAppTester:
     def __init__(self, base_url="https://voice-travel-booking.preview.emergentagent.com"):
         self.base_url = base_url
         self.api_url = f"{base_url}/api"
@@ -82,7 +82,7 @@ class TravelioWhatsAppTester:
         """Test WhatsApp webhook verification"""
         params = {
             'hub.mode': 'subscribe',
-            'hub.verify_token': 'travelio_verify_2024',
+            'hub.verify_token': 'travelioo_verify_2024',
             'hub.challenge': '12345'
         }
         success, data = self.run_test("Webhook Verification", "GET", "webhook", 200, params=params)
@@ -173,9 +173,9 @@ class TravelioWhatsAppTester:
                 print(f"   ❌ Missing categories. Found: {found_categories}, Expected: {expected_categories}")
         return False
 
-    def test_travelio_pricing(self):
-        """Test Travelio pricing rule: final_price = amadeus_price + 15 + (amadeus_price * 0.05)"""
-        success, data = self.run_test("Travelio Pricing", "GET", "test/flights", 200,
+    def test_travelioo_pricing(self):
+        """Test Travelioo pricing rule: final_price = amadeus_price + 15 + (amadeus_price * 0.05)"""
+        success, data = self.run_test("Travelioo Pricing", "GET", "test/flights", 200,
                                      params={"origin": "DSS", "destination": "CDG", "date": "2026-04-15"})
         if success and 'flights' in data:
             flights = data['flights']
@@ -432,17 +432,17 @@ class TravelioWhatsAppTester:
         return False
 
 def main():
-    print("🚀 Starting Travelio WhatsApp Agent Tests v4.0")
+    print("🚀 Starting Travelioo WhatsApp Agent Tests v4.0")
     print("=" * 60)
     
-    tester = TravelioWhatsAppTester()
+    tester = TraveliooWhatsAppTester()
     
     # Core WhatsApp Agent Tests
     tests = [
         tester.test_health_check,
         tester.test_webhook_verification,
         tester.test_flight_categorization,
-        tester.test_travelio_pricing,
+        tester.test_travelioo_pricing,
         tester.test_eur_to_xof_conversion,
         tester.test_welcome_message,
         tester.test_travel_request_parsing,
@@ -473,16 +473,16 @@ def main():
     print(f"📈 Success Rate: {success_rate:.1f}%")
     
     if success_rate >= 90:
-        print("🎉 Travelio v4.0 WhatsApp Agent backend tests highly successful!")
+        print("🎉 Travelioo v4.0 WhatsApp Agent backend tests highly successful!")
         return 0
     elif success_rate >= 75:
-        print("✅ Travelio v4.0 WhatsApp Agent backend mostly working with minor issues")
+        print("✅ Travelioo v4.0 WhatsApp Agent backend mostly working with minor issues")
         return 1
     elif success_rate >= 50:
-        print("⚠️  Travelio v4.0 WhatsApp Agent backend has some issues but core functionality works")
+        print("⚠️  Travelioo v4.0 WhatsApp Agent backend has some issues but core functionality works")
         return 2
     else:
-        print("❌ Travelio v4.0 WhatsApp Agent backend has significant issues")
+        print("❌ Travelioo v4.0 WhatsApp Agent backend has significant issues")
         return 3
 
 if __name__ == "__main__":

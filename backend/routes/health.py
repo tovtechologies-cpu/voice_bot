@@ -76,7 +76,7 @@ async def health():
 @router.get("/")
 async def root():
     return {
-        "name": "Travelio WhatsApp Travel Agent",
+        "name": "Travelioo WhatsApp Travel Agent",
         "version": "7.1",
         "description": "WhatsApp-based flight booking with Duffel GDS, AES-256 encryption, and smart airport recognition",
         "endpoints": {

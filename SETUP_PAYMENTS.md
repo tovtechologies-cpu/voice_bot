@@ -1,6 +1,6 @@
 # Payment Gateway Setup Guide
 
-Travelio supports 4 payment operators with automatic environment detection.
+Travelioo supports 4 payment operators with automatic environment detection.
 Each operator runs in one of three modes: **PRODUCTION**, **SANDBOX/TEST**, or **MOCK**.
 
 The mode is auto-detected at startup based on your `.env` configuration.

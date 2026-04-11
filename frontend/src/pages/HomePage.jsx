@@ -146,7 +146,7 @@ const HomePage = () => {
       {/* Header */}
       <header className="flex justify-between items-center mb-8 max-w-md mx-auto">
         <h1 className="text-xl font-bold bg-gradient-to-r from-[#6C63FF] to-[#00D4FF] bg-clip-text text-transparent">
-          Travelio
+          Travelioo
         </h1>
         <LanguageToggle />
       </header>

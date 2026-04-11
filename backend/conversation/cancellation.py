@@ -9,7 +9,7 @@ from services.session import update_session, clear_session
 from services.whatsapp import send_whatsapp_message
 from services.airport import get_city_name
 from utils.helpers import mask_phone, format_timestamp_gmt1, eur_to_xof
-from config import TRAVELIO_FEE
+from config import TRAVELIOO_FEE
 from database import db
 
 logger = logging.getLogger("CancellationHandler")
@@ -108,7 +108,7 @@ This date has passed.
 
 Montant paye : {price}EUR
 - Penalite compagnie : -{penalty}EUR
-- Frais Travelio : -{TRAVELIO_FEE}EUR (non remboursables)
+- Frais Travelioo : -{TRAVELIOO_FEE}EUR (non remboursables)
 ---
 *Total rembourse : {refund}EUR* ({refund_xof:,} XOF)
 
@@ -122,7 +122,7 @@ Delai : 5 a 10 jours ouvres
 
 Amount paid: {price}EUR
 - Airline penalty: -{penalty}EUR
-- Travelio fee: -{TRAVELIO_FEE}EUR (non-refundable)
+- Travelioo fee: -{TRAVELIOO_FEE}EUR (non-refundable)
 ---
 *Total refunded: {refund}EUR* ({refund_xof:,} XOF)
 
@@ -139,7 +139,7 @@ Delay: 5 to 10 business days
             msg = f"""*Remboursement integral*
 
 Montant paye : {price}EUR
-- Frais Travelio : -{TRAVELIO_FEE}EUR (non remboursables)
+- Frais Travelioo : -{TRAVELIOO_FEE}EUR (non remboursables)
 ---
 *Total rembourse : {refund}EUR* ({refund_xof:,} XOF)
 
@@ -151,7 +151,7 @@ Delai : 3 a 5 jours ouvres
             msg = f"""*Full refund*
 
 Amount paid: {price}EUR
-- Travelio fee: -{TRAVELIO_FEE}EUR (non-refundable)
+- Travelioo fee: -{TRAVELIOO_FEE}EUR (non-refundable)
 ---
 *Total refunded: {refund}EUR* ({refund_xof:,} XOF)
 
@@ -173,7 +173,7 @@ async def handle_cancellation_confirm(phone: str, text: str, session: Dict, lang
         await send_whatsapp_message(phone, msg)
         return
     if text == "3":
-        msg = "Contactez notre support : support@travelio.app" if lang == "fr" else "Contact support: support@travelio.app"
+        msg = "Contactez notre support : support@travelioo.app" if lang == "fr" else "Contact support: support@travelioo.app"
         await send_whatsapp_message(phone, msg)
         await clear_session(phone)
         return
@@ -239,7 +239,7 @@ Reference: {ref_id}"""
 
 async def handle_refund_failed(phone: str, text: str, session: Dict, lang: str):
     ref_id = session.get("_refund_ref", "N/A")
-    msg = f"Votre remboursement est en cours de traitement manuel.\nReference : {ref_id}\nContactez support@travelio.app si besoin." if lang == "fr" else f"Your refund is being processed manually.\nReference: {ref_id}\nContact support@travelio.app if needed."
+    msg = f"Votre remboursement est en cours de traitement manuel.\nReference : {ref_id}\nContactez support@travelioo.app si besoin." if lang == "fr" else f"Your refund is being processed manually.\nReference: {ref_id}\nContact support@travelioo.app if needed."
     await send_whatsapp_message(phone, msg)
     await clear_session(phone)
 

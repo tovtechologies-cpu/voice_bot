@@ -12,7 +12,7 @@
 1. Go to https://developers.facebook.com/apps/
 2. Click "Create App"
 3. Choose "Business" type
-4. Fill in app name: "Travelio" (or your preferred name)
+4. Fill in app name: "Travelioo" (or your preferred name)
 5. Select your Meta Business Account
 6. Click "Create App"
 
@@ -49,10 +49,10 @@ WHATSAPP_PHONE_ID=your_phone_number_id_here
 
 1. Go to https://business.facebook.com/settings/system-users
 2. Click "Add" to create a new system user
-3. Name: "Travelio Bot"
+3. Name: "Travelioo Bot"
 4. Role: Admin
 5. Click "Generate Token"
-6. Select your app ("Travelio")
+6. Select your app ("Travelioo")
 7. Add these permissions:
    - `whatsapp_business_management`
    - `whatsapp_business_messaging`
@@ -71,7 +71,7 @@ WHATSAPP_TOKEN=your_permanent_system_token
 2. Under "Webhook", click "Edit"
 3. Set:
    - **Callback URL:** `https://your-domain.com/api/webhook`
-   - **Verify Token:** `travelio_verify_2024` (or your custom token from .env)
+   - **Verify Token:** `travelioo_verify_2024` (or your custom token from .env)
 4. Click "Verify and Save"
 5. Meta will send a GET request to your webhook URL with the verify token
 6. Your server must respond with the `hub.challenge` value
@@ -122,7 +122,7 @@ For proactive messaging (e.g., 24h reminders), register these templates:
 - **Category:** Transactional
 - **Body:**
   ```
-  Votre reservation Travelio {{1}} est confirmee.
+  Votre reservation Travelioo {{1}} est confirmee.
   Vol: {{2}} -> {{3}}
   Date: {{4}}
   Bon voyage !
@@ -136,7 +136,7 @@ For proactive messaging (e.g., 24h reminders), register these templates:
   ```
   Rappel : votre paiement pour le vol {{1}} -> {{2}} est en attente.
   Montant: {{3}}EUR
-  Finalisez votre reservation sur Travelio.
+  Finalisez votre reservation sur Travelioo.
   ```
 
 ### Template 3: Flight Reminder (24h)
@@ -171,7 +171,7 @@ Submit templates at: WhatsApp > Message Templates > Create Template
 
 ### Test webhook verification:
 ```bash
-curl "https://your-domain.com/api/webhook?hub.mode=subscribe&hub.verify_token=travelio_verify_2024&hub.challenge=test123"
+curl "https://your-domain.com/api/webhook?hub.mode=subscribe&hub.verify_token=travelioo_verify_2024&hub.challenge=test123"
 # Expected: test123
 ```
 
@@ -194,7 +194,7 @@ curl "https://your-domain.com/api/webhook?hub.mode=subscribe&hub.verify_token=tr
 ```env
 WHATSAPP_PHONE_ID=your_phone_number_id
 WHATSAPP_TOKEN=your_permanent_system_token
-WHATSAPP_VERIFY_TOKEN=travelio_verify_2024
+WHATSAPP_VERIFY_TOKEN=travelioo_verify_2024
 WHATSAPP_WEBHOOK_SECRET=your_app_secret
 ```
 

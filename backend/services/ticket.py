@@ -20,7 +20,7 @@ def generate_ticket_pdf(booking: Dict) -> str:
     from io import BytesIO
 
     booking_ref = booking.get('booking_ref', 'TRV-XXXXXX')
-    filename = f"travelio_ticket_{booking_ref}.pdf"
+    filename = f"travelioo_ticket_{booking_ref}.pdf"
     filepath = TICKETS_DIR / filename
 
     qr_data = json.dumps({"ref": booking_ref, "passenger": booking.get('passenger_name', 'N/A'), "route": f"{booking.get('origin')} -> {booking.get('destination')}", "date": booking.get('departure_date'), "verify": f"/api/verify_qr/{booking_ref}"})
@@ -36,7 +36,7 @@ def generate_ticket_pdf(booking: Dict) -> str:
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle('Title', parent=styles['Heading1'], fontSize=24, textColor=colors.HexColor('#6C63FF'), alignment=TA_CENTER)
     elements = []
-    elements.append(Paragraph("TRAVELIO", title_style))
+    elements.append(Paragraph("TRAVELIOO", title_style))
     elements.append(Paragraph("Votre billet electronique", ParagraphStyle('Sub', fontSize=12, textColor=colors.gray, alignment=TA_CENTER)))
     elements.append(Spacer(1, 20))
     qr_image = Image(qr_buffer, width=80, height=80)

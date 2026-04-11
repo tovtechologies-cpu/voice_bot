@@ -1,5 +1,5 @@
 """
-Travelio v6 - Fare Conditions, Pre-Debit, Cancellation, Refund, and Modification Tests
+Travelioo v6 - Fare Conditions, Pre-Debit, Cancellation, Refund, and Modification Tests
 
 Tests for:
 - Pre-debit confirmation flow (fare conditions shown BEFORE amount)
@@ -413,10 +413,10 @@ class TestCancellationProcessingBlocks:
 class TestRefundCalculation:
     """Test refund calculation logic"""
     
-    def test_travelio_fee_constant(self):
-        """Travelio fee is 15 EUR non-refundable"""
-        # This is verified by code review - TRAVELIO_FEE = 15.0
-        print("PASS: Travelio fee is 15 EUR (verified in code)")
+    def test_travelioo_fee_constant(self):
+        """Travelioo fee is 15 EUR non-refundable"""
+        # This is verified by code review - TRAVELIOO_FEE = 15.0
+        print("PASS: Travelioo fee is 15 EUR (verified in code)")
     
     def test_refund_cases_defined(self):
         """All 4 refund cases are defined"""

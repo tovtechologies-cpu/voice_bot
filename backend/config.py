@@ -16,7 +16,7 @@ CORS_ORIGINS = os.environ.get('CORS_ORIGINS', '*')
 # WhatsApp
 WHATSAPP_PHONE_ID = os.environ.get('WHATSAPP_PHONE_ID', '')
 WHATSAPP_TOKEN = os.environ.get('WHATSAPP_TOKEN', '')
-WHATSAPP_VERIFY_TOKEN = os.environ.get('WHATSAPP_VERIFY_TOKEN', 'travelio_verify_2024')
+WHATSAPP_VERIFY_TOKEN = os.environ.get('WHATSAPP_VERIFY_TOKEN', 'travelioo_verify_2024')
 WHATSAPP_WEBHOOK_SECRET = os.environ.get('WHATSAPP_WEBHOOK_SECRET', '')
 
 # AI
@@ -98,7 +98,7 @@ def get_stripe_mode() -> str:
 # Constants
 API_TIMEOUT = 10.0
 EUR_TO_XOF = 655.957
-TRAVELIO_FEE = 15.0
+TRAVELIOO_FEE = 15.0
 SESSION_TIMEOUT_MINUTES = 30
 MAX_THIRD_PARTY_PROFILES = 5
 WHATSAPP_MSG_LIMIT = 900

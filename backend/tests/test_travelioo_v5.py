@@ -1,5 +1,5 @@
 """
-Travelio v5.0 - Comprehensive Backend Tests (Updated for Enrollment Flow)
+Travelioo v5.0 - Comprehensive Backend Tests (Updated for Enrollment Flow)
 Tests: Health endpoint, WhatsApp conversation flow, payment operators, 
 flight categorization, booking creation, PDF tickets, audio transcription
 
@@ -372,7 +372,7 @@ class TestPDFTicketGeneration:
         
         # Try to download ticket
         if booking_ref:
-            ticket_filename = f"travelio_ticket_{booking_ref}.pdf"
+            ticket_filename = f"travelioo_ticket_{booking_ref}.pdf"
             response = requests.get(f"{BASE_URL}/api/tickets/{ticket_filename}")
             
             # May or may not exist depending on timing
@@ -428,7 +428,7 @@ class TestPaymentPage:
         response = requests.get(f"{BASE_URL}/api/pay/TRV-TEST01?sim=1")
         assert response.status_code == 200
         html = response.text
-        assert "Stripe" in html or "Travelio" in html
+        assert "Stripe" in html or "Travelioo" in html
         print(f"✓ Simulated payment page works")
     
     def test_payment_page_404_without_intent(self):
@@ -592,7 +592,7 @@ class TestWebhookVerification:
             f"{BASE_URL}/api/webhook",
             params={
                 "hub.mode": "subscribe",
-                "hub.verify_token": "travelio_verify_2024",
+                "hub.verify_token": "travelioo_verify_2024",
                 "hub.challenge": "12345"
             }
         )

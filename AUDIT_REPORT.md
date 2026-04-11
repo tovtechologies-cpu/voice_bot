@@ -1,4 +1,4 @@
-# TRAVELIO v7.0 — COMPLETE TECHNICAL & FUNCTIONAL AUDIT REPORT
+# TRAVELIOO v7.0 — COMPLETE TECHNICAL & FUNCTIONAL AUDIT REPORT
 
 **Report Date:** February 2026
 **Auditor:** Automated Technical Audit (Exhaustive)
@@ -13,7 +13,7 @@
 **v7.0** — Modular Architecture (February 2026)
 
 ### Architecture Summary
-Travelio is a **voice-first WhatsApp conversational travel booking agent** targeting Benin / West Africa. The system is built as a **FastAPI monolith (now modularized)** that acts as a WhatsApp Cloud API webhook. Users interact exclusively via WhatsApp; there is no user-facing web application. The React frontend is a **status dashboard** for administrators only.
+Travelioo is a **voice-first WhatsApp conversational travel booking agent** targeting Benin / West Africa. The system is built as a **FastAPI monolith (now modularized)** that acts as a WhatsApp Cloud API webhook. Users interact exclusively via WhatsApp; there is no user-facing web application. The React frontend is a **status dashboard** for administrators only.
 
 **Architecture pattern:** Event-driven state machine. Each incoming WhatsApp message triggers a handler that reads the user's current `ConversationState` from MongoDB, processes the message, updates the state, and sends a response back via WhatsApp Cloud API.
 
@@ -69,7 +69,7 @@ WhatsApp User --> Meta Cloud API --> POST /api/webhook --> handler.py (state mac
 |--------|--------|
 | Backend (FastAPI) | ✅ Running on port 8001 via supervisor |
 | Frontend (React) | ✅ Running on port 3000 via supervisor |
-| MongoDB | ✅ Connected (localhost:27017, db: `travelio`) |
+| MongoDB | ✅ Connected (localhost:27017, db: `travelioo`) |
 | Ingress | ✅ `https://voice-travel-booking.preview.emergentagent.com` |
 | Hot Reload | ✅ Enabled for both frontend and backend |
 
@@ -128,7 +128,7 @@ The conversation is driven by a `ConversationState` class with **32 distinct sta
 - **Trigger condition:** New user starts conversation, or user presses "2" (start over) during profile confirmation
 - **What the agent sends (FR):**
   ```
-  Bienvenue sur Travelio !
+  Bienvenue sur Travelioo !
   Avant de rechercher votre vol, j'ai besoin de votre nom pour le billet.
 
   Comment souhaitez-vous renseigner vos informations ?
@@ -308,7 +308,7 @@ The conversation is driven by a `ConversationState` class with **32 distinct sta
 - **Trigger condition:** Flights found and displayed
 - **What the agent sends (FR):**
   ```
-  *Travelio -- 3 options trouvees*
+  *Travelioo -- 3 options trouvees*
   Cotonou -> Paris | 2026-03-15
 
   LE PLUS BAS Demo
@@ -496,7 +496,7 @@ The conversation is driven by a `ConversationState` class with **32 distinct sta
 
 #### State: `REFUND_FAILED`
 - **Trigger condition:** Automatic refund processing failed
-- **What the agent sends (FR):** "Votre remboursement est en cours de traitement manuel. Reference : REF-TRV-... Contactez support@travelio.app si besoin."
+- **What the agent sends (FR):** "Votre remboursement est en cours de traitement manuel. Reference : REF-TRV-... Contactez support@travelioo.app si besoin."
 - **Expected user input:** Any (returns same message + clears session)
 - **Next state(s):** → `IDLE`
 - **Edge cases handled:** ✅ Manual processing queue in DB. ✅ Reference number provided.
@@ -641,7 +641,7 @@ score = (price_score * 0.4) + (duration_score * 0.4) + (direct_bonus * 0.2)
 ### Pricing Margin Application
 
 ```python
-def apply_travelio_margin(base_price: float) -> float:
+def apply_travelioo_margin(base_price: float) -> float:
     return round(base_price + 15 + (base_price * 0.05), 2)
 ```
 
@@ -785,7 +785,7 @@ Annuler quand meme (sans remboursement) ?
 
 Montant paye : 210EUR
 - Penalite compagnie : -80EUR
-- Frais Travelio : -15EUR (non remboursables)
+- Frais Travelioo : -15EUR (non remboursables)
 ---
 *Total rembourse : 115EUR* (75,440 XOF)
 
@@ -795,14 +795,14 @@ Delai : 5 a 10 jours ouvres
 1 Oui, annuler et rembourser 115EUR
 2 Non, conserver
 ```
-- ✅ Refund formula: `max(0, price - airline_penalty - 15EUR_travelio_fee)`
+- ✅ Refund formula: `max(0, price - airline_penalty - 15EUR_travelioo_fee)`
 
 #### Case 3: `fully_refundable` (YES)
 ```
 *Remboursement integral*
 
 Montant paye : 210EUR
-- Frais Travelio : -15EUR (non remboursables)
+- Frais Travelioo : -15EUR (non remboursables)
 ---
 *Total rembourse : 195EUR* (127,910 XOF)
 
@@ -811,7 +811,7 @@ Delai : 3 a 5 jours ouvres
 
 1 Oui  2 Non
 ```
-- ✅ Refund formula: `price - 15EUR_travelio_fee`
+- ✅ Refund formula: `price - 15EUR_travelioo_fee`
 
 #### Case 4: `deadline_passed` (EXPIRED)
 ```
@@ -916,7 +916,7 @@ def _derive_key(key_str: str) -> bytes:
 ```
 ⚠️ SHA-256 key derivation from a string is functional but not best-practice. Should use PBKDF2, scrypt, or Argon2 with salt.
 
-**Encryption key in .env:** `ENCRYPTION_KEY=travelio_aes256_master_key_2024_prod`
+**Encryption key in .env:** `ENCRYPTION_KEY=travelioo_aes256_master_key_2024_prod`
 ❌ **The encryption key is a human-readable string**, not a proper random key. It's stored in plaintext in `.env`.
 
 ### Webhook Verification
@@ -987,7 +987,7 @@ Runs hourly. Deletes sessions inactive for 30+ days.
 | Automated session purge | ✅ 30-day cleanup |
 | Booking data purge | ❌ Not implemented (privacy policy says 24 months) |
 | Payment data retention | ❌ Not implemented (privacy policy says 5 years) |
-| DPO contact | ✅ Listed as dpo@travelio.app |
+| DPO contact | ✅ Listed as dpo@travelioo.app |
 
 ### Missing Legal Items Before Go-Live
 
@@ -1205,14 +1205,14 @@ The message chunking handles this, but the following messages are at risk of bei
 
 ### Message Formatting Quality
 
-✅ **Bold text** used consistently for headers and important values (`*Travelio*`, `*210.25EUR*`).
+✅ **Bold text** used consistently for headers and important values (`*Travelioo*`, `*210.25EUR*`).
 ✅ **Line spacing** used to separate sections within messages.
 ✅ **Numbered options** (1, 2, 3) used consistently for all choices.
 ❌ **No emoji usage** in business messages (acceptable for professional tone, but competitors use ✈️, 💰, ✅ to improve readability).
 
 **Example of well-formatted message (flight results):**
 ```
-*Travelio -- 3 options trouvees*
+*Travelioo -- 3 options trouvees*
 Cotonou -> Paris | 2026-03-15
 
 LE PLUS BAS Demo
@@ -1260,7 +1260,7 @@ Taper *2* pour selectionner
 2. ❌ **No usage of passenger's first name** in most messages after enrollment.
 3. ❌ **No booking history references** — "Vous avez voyage a Paris la derniere fois. Meme destination ?"
 4. ❌ **No personalized recommendations** based on travel patterns.
-5. ❌ **No celebration messages** — "C'est votre 3eme reservation avec Travelio ! Merci de votre fidelite."
+5. ❌ **No celebration messages** — "C'est votre 3eme reservation avec Travelioo ! Merci de votre fidelite."
 
 ### Overall Impression: Does It Feel Premium?
 
@@ -1273,7 +1273,7 @@ Taper *2* pour selectionner
 ### PDF Layout Quality
 
 ✅ **Professional layout using ReportLab:**
-- "TRAVELIO" header in purple (#6C63FF)
+- "TRAVELIOO" header in purple (#6C63FF)
 - "Votre billet electronique" subtitle in gray
 - BOARDING PASS table with purple header row
 - Clean grid layout with passenger name, passport, route, flight, date, category, price, payment method, reference
@@ -1437,7 +1437,7 @@ This section lists every feature that was specified or implied in the original r
 - **Complexity:** Easy (remove or hash passport in QR data, use booking reference only)
 
 **8. ⚠️ Encryption Key Weakness**
-- **Issue:** `ENCRYPTION_KEY=travelio_aes256_master_key_2024_prod` is a human-readable string. Key derivation uses simple SHA-256 without salt.
+- **Issue:** `ENCRYPTION_KEY=travelioo_aes256_master_key_2024_prod` is a human-readable string. Key derivation uses simple SHA-256 without salt.
 - **Impact:** Predictable key. If `.env` is compromised, all encrypted PII is exposed with minimal effort.
 - **Complexity:** Easy (generate random 32-byte key, use PBKDF2 or scrypt)
 
@@ -1457,6 +1457,6 @@ This section lists every feature that was specified or implied in the original r
 
 *End of Audit Report*
 *Generated: February 2026*
-*Codebase version: Travelio v7.0*
+*Codebase version: Travelioo v7.0*
 *Total files audited: 25 backend modules + 1 frontend module*
 *Test status: iteration_7.json — 100% pass rate*

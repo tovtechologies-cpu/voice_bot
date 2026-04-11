@@ -1,4 +1,4 @@
-"""Travelio v7.1 - WhatsApp Travel Booking Agent
+"""Travelioo v7.1 - WhatsApp Travel Booking Agent
 Modular FastAPI backend with Duffel GDS, AES-256 encryption, and smart airport recognition.
 """
 import logging
@@ -12,7 +12,7 @@ from services.security import cleanup_rate_limits
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger("Travelio")
+logger = logging.getLogger("Travelioo")
 
 # Background tasks
 async def periodic_cleanup():
@@ -32,7 +32,7 @@ async def periodic_cleanup():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    logger.info("Travelio v7.1 starting...")
+    logger.info("Travelioo v7.1 starting...")
     try:
         await db.command("ping")
         logger.info("MongoDB connected")
@@ -68,17 +68,17 @@ async def lifespan(app: FastAPI):
 
     # Start periodic cleanup
     cleanup_task = asyncio.create_task(periodic_cleanup())
-    logger.info("Travelio v7.1 ready")
+    logger.info("Travelioo v7.1 ready")
     yield
 
     # Shutdown
     cleanup_task.cancel()
     client.close()
-    logger.info("Travelio v7.1 shutdown")
+    logger.info("Travelioo v7.1 shutdown")
 
 
 # Create app
-app = FastAPI(title="Travelio", version="7.1", lifespan=lifespan)
+app = FastAPI(title="Travelioo", version="7.1", lifespan=lifespan)
 
 # CORS
 origins = CORS_ORIGINS.split(",") if CORS_ORIGINS != "*" else ["*"]

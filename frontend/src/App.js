@@ -125,7 +125,7 @@ function App() {
           <div className="flex items-center gap-2 mb-1">
             <span className="text-2xl">✈️</span>
             <h1 className="text-2xl font-bold tracking-tight bg-gradient-to-r from-[#6C63FF] to-[#00D4FF] bg-clip-text text-transparent">
-              Travelio
+              Travelioo
             </h1>
           </div>
           <p className="text-[#64748B] text-sm">
@@ -284,7 +284,7 @@ function App() {
             <div className="flex items-center justify-between">
               <span className="text-[#64748B]">Verify Token</span>
               <code className="text-[#00D4FF] text-xs bg-[rgba(0,212,255,0.06)] px-2 py-0.5 rounded">
-                travelio_verify_2024
+                travelioo_verify_2024
               </code>
             </div>
           </div>

@@ -70,7 +70,7 @@ class PaymentService:
             reference_id = str(uuid.uuid4())
             async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
                 response = await client.post(f"{MOMO_BASE_URL}/collection/v1_0/requesttopay",
-                    json={"amount": str(amount_xof), "currency": "XOF", "externalId": booking_id, "payer": {"partyIdType": "MSISDN", "partyId": phone}, "payerMessage": f"Travelio - Vol {destination}", "payeeNote": f"Booking {booking_id}"},
+                    json={"amount": str(amount_xof), "currency": "XOF", "externalId": booking_id, "payer": {"partyIdType": "MSISDN", "partyId": phone}, "payerMessage": f"Travelioo - Vol {destination}", "payeeNote": f"Booking {booking_id}"},
                     headers={"Authorization": f"Bearer {token}", "X-Reference-Id": reference_id, "X-Target-Environment": MOMO_ENVIRONMENT, "Ocp-Apim-Subscription-Key": MOMO_SUBSCRIPTION_KEY, "Content-Type": "application/json"})
                 if response.status_code == 202:
                     return {"status": "pending", "reference_id": reference_id, "is_simulated": False, "operator": PaymentOperator.MTN_MOMO}
@@ -84,7 +84,7 @@ class PaymentService:
         try:
             async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
                 response = await client.post(f"{MOOV_BASE_URL}/v1/cash-in",
-                    json={"amount": amount_xof, "currency": "XOF", "msisdn": phone, "description": f"Travelio - Vol {destination}", "externalRef": booking_id},
+                    json={"amount": amount_xof, "currency": "XOF", "msisdn": phone, "description": f"Travelioo - Vol {destination}", "externalRef": booking_id},
                     headers={"Authorization": f"Bearer {MOOV_API_KEY}", "Content-Type": "application/json"})
                 if response.status_code in [200, 201, 202]:
                     data = response.json()

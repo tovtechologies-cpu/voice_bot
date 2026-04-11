@@ -257,7 +257,7 @@ async def start_conversation(phone: str, lang: str):
 
 async def handle_new_user(phone: str, lang: str):
     if lang == "fr":
-        msg = """Bienvenue sur Travelio !
+        msg = """Bienvenue sur Travelioo !
 
 Avant de continuer, nous avons besoin de votre accord :
 
@@ -273,7 +273,7 @@ Conditions : /api/legal/terms
 *1* J'accepte, continuer
 *2* Non merci"""
     else:
-        msg = """Welcome to Travelio!
+        msg = """Welcome to Travelioo!
 
 Before we continue, we need your agreement to:
 

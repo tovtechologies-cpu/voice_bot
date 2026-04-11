@@ -1,4 +1,4 @@
-"""Travelio v7.0 - Comprehensive Backend Tests
+"""Travelioo v7.0 - Comprehensive Backend Tests
 Tests: Modular architecture, Duffel GDS (sandbox), AES-256 encryption, 
 fuzzy airport matching, date parsing, legal endpoints, rate limiting, message chunking
 """
@@ -62,7 +62,7 @@ class TestHealthAndRoot:
         data = response.json()
         
         assert data.get("version") == "7.0"
-        assert data.get("name") == "Travelio WhatsApp Travel Agent"
+        assert data.get("name") == "Travelioo WhatsApp Travel Agent"
         assert "Duffel GDS" in data.get("description", "")
         assert "AES-256" in data.get("description", "")
         
@@ -88,10 +88,10 @@ class TestLegalEndpoints:
         
         content = response.text
         assert "Conditions Generales" in content
-        assert "Travelio" in content
+        assert "Travelioo" in content
         assert "Duffel" in content  # v7.0: Duffel mentioned
         assert "AES-256-GCM" in content  # v7.0: Encryption mentioned
-        assert "15EUR" in content  # Travelio fee
+        assert "15EUR" in content  # Travelioo fee
         print("PASS: Terms of Service returns proper HTML with v7.0 content")
     
     def test_privacy_policy_returns_html(self):

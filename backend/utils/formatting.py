@@ -1,6 +1,6 @@
 """Message formatting for WhatsApp responses."""
 from typing import Dict
-from config import TRAVELIO_FEE
+from config import TRAVELIOO_FEE
 from models import PaymentOperator
 from services.airport import get_city_name
 from utils.helpers import eur_to_xof
@@ -9,7 +9,7 @@ from utils.helpers import eur_to_xof
 def format_flight_options_message(categorized: Dict, origin: str, destination: str, date: str) -> str:
     origin_city = get_city_name(origin)
     dest_city = get_city_name(destination)
-    msg = f"""*Travelio -- 3 options trouvees*
+    msg = f"""*Travelioo -- 3 options trouvees*
 {origin_city} -> {dest_city} | {date}
 """
     option_num = 1
@@ -114,13 +114,13 @@ def format_retry_options(operator: str, lang: str) -> str:
 
 def format_booking_confirmed(booking: Dict, lang: str) -> str:
     if lang == "fr":
-        return f"""Votre billet Travelio est pret !
+        return f"""Votre billet Travelioo est pret !
 Vol {get_city_name(booking['origin'])} -> {get_city_name(booking['destination'])}
 {booking['departure_date']}
 Reservation : {booking['booking_ref']}
 Bon voyage !"""
     else:
-        return f"""Your Travelio ticket is ready!
+        return f"""Your Travelioo ticket is ready!
 Flight {get_city_name(booking['origin'])} -> {get_city_name(booking['destination'])}
 {booking['departure_date']}
 Booking: {booking['booking_ref']}

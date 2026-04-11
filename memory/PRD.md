@@ -1,7 +1,7 @@
-# Travelio PRD - WhatsApp Travel Booking Agent
+# Travelioo PRD - WhatsApp Travel Booking Agent
 
 ## Original Problem Statement
-Voice-first WhatsApp conversational agent for travel booking (Travelio), targeting Benin/West Africa.
+Voice-first WhatsApp conversational agent for travel booking (Travelioo), targeting Benin/West Africa.
 Users interact exclusively via WhatsApp to search, book, and pay for flights.
 
 ## Architecture

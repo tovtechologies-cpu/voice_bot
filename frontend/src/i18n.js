@@ -1,8 +1,8 @@
-// Internationalization for Travelio
+// Internationalization for Travelioo
 const translations = {
   en: {
     // General
-    appName: "Travelio",
+    appName: "Travelioo",
     tagline: "Your voice, your journey",
     
     // Home
@@ -88,7 +88,7 @@ const translations = {
   },
   fr: {
     // General
-    appName: "Travelio",
+    appName: "Travelioo",
     tagline: "Votre voix, votre voyage",
     
     // Home

@@ -15,7 +15,7 @@ from config import (
 logger = logging.getLogger("FlightService")
 
 
-def apply_travelio_margin(base_price: float) -> float:
+def apply_travelioo_margin(base_price: float) -> float:
     return round(base_price + 15 + (base_price * 0.05), 2)
 
 
@@ -104,7 +104,7 @@ def _parse_duffel_offers(offers: list) -> List[Dict]:
     for offer in offers[:20]:
         try:
             base_price = float(offer.get("total_amount", 0))
-            final_price = apply_travelio_margin(base_price)
+            final_price = apply_travelioo_margin(base_price)
             currency = offer.get("total_currency", "EUR")
 
             slices = offer.get("slices", [])
@@ -174,7 +174,7 @@ def generate_mock_flights(origin: str, destination: str, date: str, adults: int 
     for i in range(min(5, len(base_prices))):
         airline_name, carrier = random.choice(AIRLINES)
         base_price = base_prices[i] + random.randint(-20, 30)
-        final_price = apply_travelio_margin(base_price)
+        final_price = apply_travelioo_margin(base_price)
         dur_min, stops = durations_data[i]
         duration = _minutes_to_iso(dur_min)
 
@@ -266,7 +266,7 @@ async def create_duffel_order(offer_id: str, passenger_data: dict) -> Optional[D
                             "born_on": passenger_data.get("dateOfBirth"),
                             "title": "mr",
                             "gender": "m",
-                            "email": "booking@travelio.app",
+                            "email": "booking@travelioo.app",
                             "phone_number": passenger_data.get("phone", "")
                         }]
                     }

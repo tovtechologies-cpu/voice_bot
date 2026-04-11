@@ -1,6 +1,6 @@
 import random
 from datetime import datetime, timedelta
-from config import TRAVELIO_FEE
+from config import TRAVELIOO_FEE
 
 
 class ConversationState:
@@ -99,7 +99,7 @@ def get_fare_conditions(departure_date: str = None) -> dict:
 
 
 def calculate_refund(booking: dict) -> dict:
-    """Calculate refund based on fare conditions and Travelio fee policy."""
+    """Calculate refund based on fare conditions and Travelioo fee policy."""
     price_eur = booking.get("price_eur", 0)
     refundable = booking.get("refundable", "NO")
     penalty = booking.get("refund_penalty_eur") or 0
@@ -119,9 +119,9 @@ def calculate_refund(booking: dict) -> dict:
     if deadline_passed:
         return {"case": "deadline_passed", "refund_eur": 0, "deadline_passed": True, "deadline": deadline_str}
     if refundable == "YES":
-        refund = price_eur - TRAVELIO_FEE
+        refund = price_eur - TRAVELIOO_FEE
         return {"case": "fully_refundable", "refund_eur": round(refund, 2), "deadline_passed": False}
     if refundable == "PARTIAL":
-        refund = max(0, price_eur - penalty - TRAVELIO_FEE)
+        refund = max(0, price_eur - penalty - TRAVELIOO_FEE)
         return {"case": "partial_refund", "refund_eur": round(refund, 2), "airline_penalty": penalty, "deadline_passed": False}
     return {"case": "non_refundable", "refund_eur": 0, "deadline_passed": False}

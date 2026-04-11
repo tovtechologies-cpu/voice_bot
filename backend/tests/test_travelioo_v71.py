@@ -1,5 +1,5 @@
 """
-Travelio v7.1 Backend Tests
+Travelioo v7.1 Backend Tests
 Tests for: Webhook signature verification, GDPR consent flow, health endpoint updates,
 QR code without passport, modification flow, environment modes
 """
@@ -97,7 +97,7 @@ class TestWebhookVerification:
         """GET /api/webhook should verify with correct token"""
         params = {
             "hub.mode": "subscribe",
-            "hub.verify_token": "travelio_verify_2024",
+            "hub.verify_token": "travelioo_verify_2024",
             "hub.challenge": "test_challenge_12345"
         }
         response = requests.get(f"{BASE_URL}/api/webhook", params=params)

@@ -70,20 +70,20 @@ async def payment_page(booking_id: str):
 
     if not STRIPE_PUBLISHABLE_KEY or STRIPE_PUBLISHABLE_KEY == 'your_stripe_publishable_key_here':
         return HTMLResponse(f"""<!DOCTYPE html><html><body style='font-family:sans-serif;max-width:600px;margin:50px auto;text-align:center'>
-<h2>Travelio Payment</h2><p>Booking: {booking.get("booking_ref")}</p><p>Amount: {booking.get("price_eur")}EUR</p>
+<h2>Travelioo Payment</h2><p>Booking: {booking.get("booking_ref")}</p><p>Amount: {booking.get("price_eur")}EUR</p>
 <p style='color:orange'>Stripe not configured -- simulated mode</p>
 <button onclick='window.close()' style='padding:12px 24px;background:#6C63FF;color:white;border:none;border-radius:8px;cursor:pointer'>Simulate Payment</button>
 </body></html>""")
 
     return HTMLResponse(f"""<!DOCTYPE html><html><head>
-<title>Travelio - Paiement</title><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Travelioo - Paiement</title><meta name="viewport" content="width=device-width,initial-scale=1">
 <script src="https://js.stripe.com/v3/"></script>
 <style>body{{font-family:sans-serif;max-width:500px;margin:50px auto;padding:20px}}
 .pay-btn{{width:100%;padding:14px;border:none;border-radius:8px;font-size:16px;cursor:pointer;margin:8px 0}}
 #card-element{{border:1px solid #ccc;border-radius:8px;padding:14px;margin:16px 0}}
 .gpay{{background:#000;color:#fff}}.apay{{background:#000;color:#fff}}
 .card-pay{{background:#6C63FF;color:#fff}}</style></head>
-<body><h2>Travelio</h2>
+<body><h2>Travelioo</h2>
 <p>Reservation: <strong>{booking.get("booking_ref")}</strong></p>
 <p>Montant: <strong>{booking.get("price_eur")}EUR</strong></p>
 <div id="card-element"></div><div id="error" style="color:red;margin:8px 0"></div>

@@ -60,7 +60,7 @@ const ConfirmationModal = ({ isOpen, onClose, booking, userPhone, t }) => {
     } else {
       // Fallback: create simple text ticket
       const ticketContent = `
-TRAVELIO TICKET
+TRAVELIOO TICKET
 ================
 Booking Reference: ${bookingRef}
 
@@ -75,14 +75,14 @@ Total Price: ${(bookingData.price || 0).toLocaleString()} ${bookingData.currency
 Status: CONFIRMED
 Payment: COMPLETED
 
-Thank you for choosing Travelio!
+Thank you for choosing Travelioo!
       `;
 
       const blob = new Blob([ticketContent], { type: 'text/plain' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `travelio-ticket-${bookingRef}.txt`;
+      a.download = `travelioo-ticket-${bookingRef}.txt`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
