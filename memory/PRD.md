@@ -6,7 +6,7 @@ Users interact exclusively via WhatsApp to search, book, and pay for flights.
 
 ## Architecture
 - Backend: FastAPI (Python), modular structure (services/, conversation/, routes/, utils/)
-- Database: MongoDB (Motor async driver)
+- Database: MongoDB (Motor async driver), database name: `travelioo`
 - Frontend: React (admin status dashboard only, not user-facing)
 - AI: Claude Sonnet 4.5 (intent parsing), OpenAI Whisper (voice transcription)
 - GDS: Duffel API (sandbox/mock mode)
@@ -30,17 +30,22 @@ Users interact exclusively via WhatsApp to search, book, and pay for flights.
 - Third-party passenger management (up to 5 profiles)
 - Frontend status dashboard
 
-### v7.1 (Security & compliance update — Feb 2026)
-- P0.1: WhatsApp webhook signature verification (X-Hub-Signature-256 / HMAC-SHA256)
-- P0.2: Duffel environment-aware mode switching (PRODUCTION/SANDBOX/MOCK)
-- P0.3: Payment gateway environment-aware detection (auto-detect per operator)
-- P0.4: Enhanced health endpoint with webhook_security and environment_modes
-- P1.1: GDPR consent flow (AWAITING_CONSENT state wired up before enrollment)
-- P1.2: Modification flow fix (cancels original booking before rebooking)
-- P1.3: QR code passport removal (no more plaintext passport in QR data)
-- Startup mode logging for all services
+### v7.1 (Security & compliance update)
+- Webhook signature verification (X-Hub-Signature-256 / HMAC-SHA256)
+- Duffel environment-aware mode switching (PRODUCTION/SANDBOX/MOCK)
+- Payment gateway environment-aware detection
+- Enhanced health endpoint with webhook_security and environment_modes
+- GDPR consent flow (AWAITING_CONSENT state)
+- Modification flow fix (cancels original booking before rebooking)
+- QR code passport removal
 - Setup documentation: SETUP_WHATSAPP.md, SETUP_PAYMENTS.md, .env.example
-- Frontend dashboard: webhook security section, mock/sandbox/production/live status badges
+
+### v7.1.1 (Rename — Feb 2026)
+- Complete rename from Travelio → Travelioo across all 30+ files
+- Database migrated: travelio → travelioo
+- 3 test files renamed
+- Webhook verify token: travelioo_verify_2024
+- Zero regressions confirmed (100% test pass rate)
 
 ## Prioritized Backlog
 
