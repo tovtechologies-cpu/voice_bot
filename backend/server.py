@@ -56,6 +56,9 @@ async def lifespan(app: FastAPI):
     await db.hitl_reviews.create_index("review_id", unique=True)
     await db.hitl_reviews.create_index("status")
     await db.hitl_reviews.create_index("phone")
+    # Fare alerts indexes
+    await db.fare_cache.create_index("route", unique=True)
+    await db.fare_alerts.create_index([("phone", 1), ("route", 1), ("sent_at", -1)])
 
     # Log environment modes
     from config import get_duffel_mode, get_momo_mode, get_moov_mode, get_stripe_mode, WHATSAPP_WEBHOOK_SECRET, WHATSAPP_PHONE_ID, WHATSAPP_TOKEN, CELTIIS_API_KEY
@@ -89,12 +92,24 @@ async def lifespan(app: FastAPI):
                 logger.error(f"Disruption monitor error: {e}")
             await asyncio.sleep(900)  # Every 15 minutes
     disruption_task = asyncio.create_task(periodic_disruption_check())
+    # Start fare alert monitoring (check every 24 hours)
+    async def periodic_fare_check():
+        await asyncio.sleep(60)  # Wait 1 min after startup
+        while True:
+            try:
+                from services.fare_alerts import monitor_fares_for_all_users
+                await monitor_fares_for_all_users()
+            except Exception as e:
+                logger.error(f"Fare alert monitor error: {e}")
+            await asyncio.sleep(86400)  # Every 24 hours
+    fare_task = asyncio.create_task(periodic_fare_check())
     logger.info("Travelioo v7.1 ready")
     yield
 
     # Shutdown
     cleanup_task.cancel()
     disruption_task.cancel()
+    fare_task.cancel()
     client.close()
     logger.info("Travelioo v7.1 shutdown")
 
@@ -115,6 +130,7 @@ from routes.test import router as test_router
 from routes.telegram_webhook import router as telegram_router
 from routes.hitl import router as hitl_router
 from routes.disruptions import router as disruption_router
+from routes.fare_alerts import router as fare_alerts_router
 
 # All routes under /api prefix
 from fastapi import APIRouter
@@ -127,5 +143,6 @@ api_router.include_router(test_router)
 api_router.include_router(telegram_router)
 api_router.include_router(hitl_router)
 api_router.include_router(disruption_router)
+api_router.include_router(fare_alerts_router)
 
 app.include_router(api_router)
