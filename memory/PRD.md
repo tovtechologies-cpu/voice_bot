@@ -110,15 +110,32 @@ Travelioo is a WhatsApp-based travel booking chatbot for the African market (pri
 
 ## Pending / Upcoming
 
-### Phase C (P2)
-- [ ] **MULTILINGUAL SUPPORT + HUMAN-IN-THE-LOOP**: African language translation, HITL trigger on low confidence
-- [ ] **PROACTIVE SAV**: Flight disruption notifications (delay, cancellation, gate change)
+### Phase C Step 1 — Multilingual Support + HITL (Completed 2026-04-15)
+- [x] **7-Language Detection**: French, English, Wolof, Fon, Yoruba, Hausa, Swahili via keyword matching
+- [x] **Translation Pipeline**: African languages auto-translated to French via Claude before parsing
+- [x] **HITL System**: Reviews triggered when confidence < 0.85 or transaction > 500 EUR
+- [x] HITL reviews stored in MongoDB, accessible via GET /api/hitl/reviews
+- [x] Review resolution via POST /api/hitl/reviews/{id}/resolve
+- [x] Shadow profile language_pref updated on detection
+- [x] HUMAN_REVIEW_WEBHOOK alerts (env var, currently empty)
+
+### Phase C Step 2 — Proactive SAV + Flight Disruption (Completed 2026-04-15)
+- [x] **Disruption Types**: DELAY, CANCELLATION, GATE_CHANGE, SCHEDULE_CHANGE
+- [x] **Multi-channel Notification**: Alerts on WhatsApp + Telegram if both linked
+- [x] **Auto-refund on CANCELLATION**: GDS price refunded, Travelioo fees non-refundable, split payers refunded individually
+- [x] **Rebooking Offer**: Delays > 2 hours trigger rebooking conversation flow
+- [x] Events stored in booking.disruption_events array
+- [x] Background monitoring task (every 15 minutes for active bookings)
+- [x] API: POST /api/disruptions/notify, GET /api/disruptions/events/{ref}
+
+## All Phases Complete
 
 ## Known Issues
 - WhatsApp Cloud API token is invalid (user to provide correct token from Meta Developer Console)
 - Telegram Bot token is stub (user to provide TELEGRAM_BOT_TOKEN before deployment)
 - All payment drivers are in MOCK mode (no real API keys configured)
 - Duffel is in SANDBOX mode (test flight data)
+- HUMAN_REVIEW_WEBHOOK not configured (HITL alerts logged only)
 
 ## Testing
 - Test via: POST /api/test/simulate with {phone, message, channel?, chat_id?}
@@ -127,4 +144,6 @@ Travelioo is a WhatsApp-based travel booking chatbot for the African market (pri
 - Bookings: GET /api/test/bookings/{phone}
 - Force-fail: POST /api/test/force_fail with {phone}
 - Telegram webhook: POST /api/telegram/webhook
-- Latest test reports: iteration_10.json (Phase A: 23/23), iteration_11.json (Phase B: 17/17)
+- Latest test reports: iteration_10.json (Phase A: 23/23), iteration_11.json (Phase B: 17/17), iteration_12.json (Phase C: 31/31)
+- HITL reviews: GET /api/hitl/reviews
+- Disruptions: POST /api/disruptions/notify, GET /api/disruptions/events/{ref}
