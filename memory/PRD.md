@@ -1,71 +1,100 @@
-# Travelioo PRD - WhatsApp Travel Booking Agent
+# Travelioo — Product Requirements Document
 
-## Original Problem Statement
-Voice-first WhatsApp conversational agent for travel booking (Travelioo), targeting Benin/West Africa.
-Users interact exclusively via WhatsApp to search, book, and pay for flights.
+## Overview
+Travelioo is a WhatsApp-based travel booking chatbot for the African market (primarily Benin). Users interact via WhatsApp (and soon Telegram) to search flights, enroll passengers, pay via local mobile money, and receive e-tickets.
+
+## Tech Stack
+- **Backend**: FastAPI + MongoDB + Motor (async)
+- **AI**: Claude Sonnet 4.5 (via Emergent LLM Key), OpenAI Whisper (voice)
+- **GDS**: Duffel API (sandbox)
+- **Messaging**: Meta WhatsApp Cloud API
+- **Payments**: Modular driver architecture (Celtiis Cash, MTN MoMo, Moov Money, Stripe)
+- **Security**: AES-256-GCM encryption, webhook signature verification
 
 ## Architecture
-- Backend: FastAPI (Python), modular structure (services/, conversation/, routes/, utils/)
-- Database: MongoDB (Motor async driver), database name: `travelioo`
-- Frontend: React (admin status dashboard only, not user-facing)
-- AI: Claude Sonnet 4.5 (intent parsing), OpenAI Whisper (voice transcription)
-- GDS: Duffel API (sandbox/mock mode)
-- Payments: MTN MoMo, Moov Money, Stripe (Google Pay/Apple Pay) — all simulated
-- Security: AES-256-GCM encryption, rate limiting, webhook signature verification
+```
+/app/backend/
+  server.py           — FastAPI app, lifespan, route mounting
+  config.py           — Environment variables, constants
+  models.py           — ConversationState, pricing, fare conditions
+  database.py         — MongoDB connection
+  payment_drivers/    — Modular payment driver architecture
+    __init__.py       — BasePaymentDriver, PaymentResult
+    router.py         — Geographic routing, menu builder
+    celtiis_driver.py — Celtiis Cash (Benin priority)
+    mtn_momo_driver.py— MTN MoMo (UEMOA)
+    moov_driver.py    — Moov Money/Flooz
+    stripe_driver.py  — Cards / Google Pay / Apple Pay
+  services/           — Business logic services
+    shadow_profile.py — Cross-channel user profiles
+    whatsapp.py       — Meta WhatsApp Cloud API
+    flight.py         — Duffel GDS integration
+    security.py       — AES-256-GCM, rate limiting
+    payment.py        — Legacy payment service (deprecated)
+    ai.py, whisper.py, passport.py, ticket.py, etc.
+  conversation/       — State machine handlers
+    handler.py        — Main dispatcher
+    booking.py        — Flight search, payment flow
+    enrollment.py     — Passenger registration, OCR, consent
+    cancellation.py   — Cancellation & refund
+    modification.py   — Booking modification
+  routes/             — API endpoints
+    webhook.py, test.py, health.py, payments.py, legal.py
+```
 
-## What's Been Implemented
+## Completed Features
 
-### v7.0 (Initial modular release)
-- Complete monolith-to-modular refactoring (server.py 3600+ lines → 85 lines)
-- Duffel API migration from Amadeus (sandbox fallback)
-- AES-256-GCM encryption for PII (passport, DOB, expiry)
-- Rate limiting (messages, payments, enrollment)
-- Legal endpoints (/legal/terms, /legal/privacy)
-- Airport recognition with RapidFuzz fuzzy matching
-- Natural language date parsing with dateparser
-- Full conversation state machine (32 states)
-- 4 payment operators with simulation
-- PDF ticket generation with QR code
-- Cancellation with 4 fare condition cases
-- Third-party passenger management (up to 5 profiles)
-- Frontend status dashboard
+### Foundation (v7.1)
+- [x] WhatsApp conversation state machine (20+ states)
+- [x] Manual + OCR passport enrollment
+- [x] Flight search via Duffel GDS (sandbox)
+- [x] E-ticket PDF generation
+- [x] AES-256-GCM PII encryption
+- [x] Rate limiting + payment velocity checks
+- [x] Third-party passenger booking
+- [x] Cancellation + refund with fare conditions
+- [x] Booking modification flow
 
-### v7.1 (Security & compliance update)
-- Webhook signature verification (X-Hub-Signature-256 / HMAC-SHA256)
-- Duffel environment-aware mode switching (PRODUCTION/SANDBOX/MOCK)
-- Payment gateway environment-aware detection
-- Enhanced health endpoint with webhook_security and environment_modes
-- GDPR consent flow (AWAITING_CONSENT state)
-- Modification flow fix (cancels original booking before rebooking)
-- QR code passport removal
-- Setup documentation: SETUP_WHATSAPP.md, SETUP_PAYMENTS.md, .env.example
+### Security & Compliance
+- [x] Webhook signature verification (X-Hub-Signature-256)
+- [x] GDPR/APDP consent flow
+- [x] Data deletion (SUPPRIMER MES DONNEES)
+- [x] Environment mode detection (production/sandbox/mock)
+- [x] Input sanitization
 
-### v7.1.1 (Rename — Feb 2026)
-- Complete rename from Travelio → Travelioo across all 30+ files
-- Database migrated: travelio → travelioo
-- 3 test files renamed
-- Webhook verify token: travelioo_verify_2024
-- Zero regressions confirmed (100% test pass rate)
+### Meta WhatsApp Cloud API
+- [x] Official webhook verification (GET /api/webhook)
+- [x] Message normalization (text, audio, image)
+- [x] Send text, document, and template messages
+- [x] Error handling for token/auth failures
 
-## Prioritized Backlog
+### Phase A Enterprise Grade (Completed 2026-04-15)
+- [x] **Shadow Profiles**: Cross-channel user profiles created on consent, updated with travel_history and payment_methods after each booking
+- [x] **Dynamic Pricing**: Tiered Travelioo fee grid (<200 EUR = 10 EUR flat, 200-500 EUR = 8%, >500 EUR = 6%). Fee is non-refundable.
+- [x] **Payment Drivers**: Modular architecture with geographic routing. Celtiis Cash is default for Benin (BJ). Drivers: Celtiis, MTN MoMo, Moov Money, Stripe. All currently in MOCK mode.
+- [x] **Interactive OCR Rebound**: When passport scan is partial, missing fields are presented for interactive correction instead of hard fallback to manual entry.
+- [x] Old dead payment polling code removed
+- [x] Force-fail test mechanism works with new driver architecture
 
-### P0 (Before production)
-- Configure real WhatsApp Business API (external Meta Console)
-- Replace Duffel sandbox key with real production key
-- Configure at least one real payment gateway
+## Pending / Upcoming
 
-### P1
-- 24h flight reminder (scheduled notifications)
-- Round-trip flight support
-- Cabin class selection
-- Booking history view ("show my bookings" command)
-- Language switching mid-conversation
-- Profile editing and deletion
+### Phase B (P1)
+- [ ] **DUAL CHANNEL**: Telegram Bot API support (telegram_handler.py, /telegram/webhook)
+- [ ] **MULTI-NUMBER SPLIT PAYMENT**: Payment split between 2+ numbers with 1,300 XOF reconciliation fee
 
-### P2
-- Celtiis Cash payment integration
-- Multi-passenger booking
-- XOF primary currency display for Benin users
-- Whisper correction dictionary
-- Caching for airport resolution and AI responses
-- Circuit breaker for external API calls
+### Phase C (P2)
+- [ ] **MULTILINGUAL SUPPORT + HUMAN-IN-THE-LOOP**: African language translation, HITL trigger on low confidence
+- [ ] **PROACTIVE SAV**: Flight disruption notifications (delay, cancellation, gate change)
+
+## Known Issues
+- WhatsApp Cloud API token is invalid (user to provide correct token from Meta Developer Console)
+- All payment drivers are in MOCK mode (no real API keys configured)
+- Duffel is in SANDBOX mode (test flight data)
+
+## Testing
+- Test via: POST /api/test/simulate with {phone, message}
+- Health: GET /api/health
+- Session: GET /api/test/session/{phone}
+- Bookings: GET /api/test/bookings/{phone}
+- Force-fail: POST /api/test/force_fail with {phone}
+- Latest test report: /app/test_reports/iteration_10.json (23/23 passed)
