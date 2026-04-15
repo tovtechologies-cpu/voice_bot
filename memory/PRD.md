@@ -130,6 +130,19 @@ Travelioo is a WhatsApp-based travel booking chatbot for the African market (pri
 
 ## All Phases Complete
 
+### Predictive Fare Alerts (Completed 2026-04-15)
+- [x] **Route Analysis**: Detects recurring routes from shadow profile travel_history (2+ bookings)
+- [x] **Fare Monitoring**: Checks Duffel fares with 24h cache
+- [x] **Alert Threshold**: Triggers when fare drops > 10% below user's historical average
+- [x] **Rate Limiting**: Max 1 alert per route per week
+- [x] **Multi-channel**: Sends on WhatsApp + Telegram if both linked
+- [x] **History**: Stored in fare_alerts collection + shadow profile fare_alert_history
+- [x] **Background Task**: Runs every 24h for all users with 2+ trips
+- [x] API: GET /api/fare-alerts/routes/{phone}, POST /api/fare-alerts/check/{phone}, GET /api/fare-alerts/fare/{origin}/{dest}
+
+## Deployment
+See `/app/DEPLOYMENT_CHECKLIST.md` for all required environment variables.
+
 ## Known Issues
 - WhatsApp Cloud API token is invalid (user to provide correct token from Meta Developer Console)
 - Telegram Bot token is stub (user to provide TELEGRAM_BOT_TOKEN before deployment)
@@ -144,6 +157,7 @@ Travelioo is a WhatsApp-based travel booking chatbot for the African market (pri
 - Bookings: GET /api/test/bookings/{phone}
 - Force-fail: POST /api/test/force_fail with {phone}
 - Telegram webhook: POST /api/telegram/webhook
-- Latest test reports: iteration_10.json (Phase A: 23/23), iteration_11.json (Phase B: 17/17), iteration_12.json (Phase C: 31/31)
+- Latest test reports: iteration_10 (Phase A: 23/23), iteration_11 (Phase B: 17/17), iteration_12 (Phase C: 31/31), iteration_13 (Fare Alerts: 28/28)
 - HITL reviews: GET /api/hitl/reviews
 - Disruptions: POST /api/disruptions/notify, GET /api/disruptions/events/{ref}
+- Fare alerts: GET /api/fare-alerts/routes/{phone}, POST /api/fare-alerts/check/{phone}
