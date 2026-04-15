@@ -27,19 +27,24 @@ Travelioo is a WhatsApp-based travel booking chatbot for the African market (pri
     stripe_driver.py  — Cards / Google Pay / Apple Pay
   services/           — Business logic services
     shadow_profile.py — Cross-channel user profiles
-    whatsapp.py       — Meta WhatsApp Cloud API
+    whatsapp.py       — Meta WhatsApp Cloud API (channel-aware routing)
+    telegram.py       — Telegram Bot API messaging
+    channel.py        — Channel registry (whatsapp/telegram routing)
     flight.py         — Duffel GDS integration
     security.py       — AES-256-GCM, rate limiting
     payment.py        — Legacy payment service (deprecated)
     ai.py, whisper.py, passport.py, ticket.py, etc.
   conversation/       — State machine handlers
     handler.py        — Main dispatcher
-    booking.py        — Flight search, payment flow
+    booking.py        — Flight search, payment flow, fast-track
     enrollment.py     — Passenger registration, OCR, consent
+    split_payment.py  — Multi-number split payment flow
     cancellation.py   — Cancellation & refund
     modification.py   — Booking modification
   routes/             — API endpoints
-    webhook.py, test.py, health.py, payments.py, legal.py
+    webhook.py        — WhatsApp webhook
+    telegram_webhook.py — Telegram webhook
+    test.py, health.py, payments.py, legal.py
 ```
 
 ## Completed Features
@@ -81,11 +86,29 @@ Travelioo is a WhatsApp-based travel booking chatbot for the African market (pri
 - [x] Accept (1) skips method selection, Decline (2) shows full menu
 - [x] New state: `PAYMENT_FASTTRACK` in ConversationState
 
-## Pending / Upcoming
+### Phase B Step 2 — Telegram Dual Channel (Completed 2026-04-15)
+- [x] `routes/telegram_webhook.py` — Telegram Bot API webhook endpoint at `/api/telegram/webhook`
+- [x] `services/telegram.py` — Telegram message sending (text + documents)
+- [x] `services/channel.py` — Channel registry for routing messages to correct channel
+- [x] Shared state machine: WhatsApp and Telegram users go through identical conversation flow
+- [x] Shadow Profile auto-links telegram_id when Telegram users interact
+- [x] `/start` command maps to "bonjour", `/aide` to "aide", etc.
+- [x] Contact sharing: Telegram users can share phone to link real phone number
+- [x] Channel-aware `send_whatsapp_message` auto-routes to Telegram when needed
+- [x] Test simulate endpoint supports `channel` and `chat_id` params
+- [x] Stub bot token (user to provide TELEGRAM_BOT_TOKEN before deployment)
 
-### Phase B (P1) — Remaining
-- [ ] **DUAL CHANNEL**: Telegram Bot API support (telegram_handler.py, /telegram/webhook)
-- [ ] **MULTI-NUMBER SPLIT PAYMENT**: Payment split between 2+ numbers with 1,300 XOF reconciliation fee
+### Phase B Step 3 — Multi-Number Split Payment (Completed 2026-04-15)
+- [x] **Split Payment**: type "split"/"diviser" at payment method to split between 2-5 numbers
+- [x] Reconciliation fee: 2 EUR / 1,300 XOF per additional payer
+- [x] Phone number collection with validation and normalization
+- [x] All payers get simultaneous payment notifications
+- [x] Parallel polling: booking confirmed only when ALL payers succeed
+- [x] Auto-refund: if any payer fails, all successful payments are refunded automatically
+- [x] Shadow profiles updated with travel_history, payment_methods, and trusted_payers
+- [x] New states: SPLIT_PAYER_COUNT, SPLIT_COLLECTING_NUMBERS, SPLIT_CONFIRM, SPLIT_AWAITING_PAYMENTS
+
+## Pending / Upcoming
 
 ### Phase C (P2)
 - [ ] **MULTILINGUAL SUPPORT + HUMAN-IN-THE-LOOP**: African language translation, HITL trigger on low confidence
@@ -93,13 +116,15 @@ Travelioo is a WhatsApp-based travel booking chatbot for the African market (pri
 
 ## Known Issues
 - WhatsApp Cloud API token is invalid (user to provide correct token from Meta Developer Console)
+- Telegram Bot token is stub (user to provide TELEGRAM_BOT_TOKEN before deployment)
 - All payment drivers are in MOCK mode (no real API keys configured)
 - Duffel is in SANDBOX mode (test flight data)
 
 ## Testing
-- Test via: POST /api/test/simulate with {phone, message}
+- Test via: POST /api/test/simulate with {phone, message, channel?, chat_id?}
 - Health: GET /api/health
 - Session: GET /api/test/session/{phone}
 - Bookings: GET /api/test/bookings/{phone}
 - Force-fail: POST /api/test/force_fail with {phone}
-- Latest test report: /app/test_reports/iteration_10.json (23/23 passed)
+- Telegram webhook: POST /api/telegram/webhook
+- Latest test reports: iteration_10.json (Phase A: 23/23), iteration_11.json (Phase B: 17/17)
