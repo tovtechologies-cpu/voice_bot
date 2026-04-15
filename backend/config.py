@@ -18,6 +18,11 @@ WHATSAPP_PHONE_ID = os.environ.get('WHATSAPP_PHONE_ID', '')
 WHATSAPP_TOKEN = os.environ.get('WHATSAPP_TOKEN', '')
 WHATSAPP_VERIFY_TOKEN = os.environ.get('WHATSAPP_VERIFY_TOKEN', 'travelioo_verify_2024')
 WHATSAPP_WEBHOOK_SECRET = os.environ.get('WHATSAPP_WEBHOOK_SECRET', '')
+WHATSAPP_API_VERSION = os.environ.get('WHATSAPP_API_VERSION', 'v18.0')
+WHATSAPP_BASE_URL = os.environ.get('WHATSAPP_BASE_URL', 'https://graph.facebook.com')
+WHATSAPP_BUSINESS_PHONE = os.environ.get('WHATSAPP_BUSINESS_PHONE', '')
+WHATSAPP_COUNTRY = os.environ.get('WHATSAPP_COUNTRY', 'BJ')
+WHATSAPP_COUNTRY_CODE = os.environ.get('WHATSAPP_COUNTRY_CODE', '229')
 
 # AI
 EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')

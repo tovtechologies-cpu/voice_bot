@@ -1,11 +1,15 @@
-"""WhatsApp webhook routes with signature verification."""
+"""WhatsApp webhook routes with signature verification and async processing."""
 import hmac
 import hashlib
+import json
+import asyncio
 import logging
 from datetime import datetime, timezone
-from fastapi import APIRouter, Request, Query, Response
+from fastapi import APIRouter, Request, Query, Response, BackgroundTasks
 from conversation.handler import handle_message
 from config import WHATSAPP_VERIFY_TOKEN, WHATSAPP_WEBHOOK_SECRET
+from utils.helpers import normalize_phone, mask_phone
+from services.whatsapp import update_user_message_timestamp, set_last_message_received_at
 
 router = APIRouter()
 logger = logging.getLogger("WebhookRoutes")
@@ -21,7 +25,7 @@ def get_last_verified_at():
 def verify_whatsapp_signature(payload_body: bytes, signature_header: str, secret: str) -> bool:
     """Verify X-Hub-Signature-256 from WhatsApp Cloud API."""
     if not secret:
-        return True  # Skip verification if secret not configured (dev mode)
+        return True
     if not signature_header:
         return False
     expected = 'sha256=' + hmac.new(
@@ -38,13 +42,29 @@ async def verify_webhook(
     hub_token: str = Query(None, alias="hub.verify_token"),
     hub_challenge: str = Query(None, alias="hub.challenge")
 ):
-    if hub_mode == "subscribe" and hub_token == WHATSAPP_VERIFY_TOKEN:
+    """Webhook verification — Meta sends GET to verify endpoint ownership."""
+    # Accept either WHATSAPP_WEBHOOK_SECRET or WHATSAPP_VERIFY_TOKEN
+    valid_tokens = [t for t in [WHATSAPP_WEBHOOK_SECRET, WHATSAPP_VERIFY_TOKEN] if t]
+    if hub_mode == "subscribe" and hub_token in valid_tokens:
+        logger.info("[WEBHOOK] Verification successful")
         return Response(content=hub_challenge, media_type="text/plain")
+    logger.warning(f"[WEBHOOK] Verification failed — token mismatch")
     return {"error": "Verification failed"}
 
 
+async def _process_message_async(phone: str, text_body: str, audio_id: str, image_id: str):
+    """Process incoming WhatsApp message asynchronously."""
+    try:
+        normalized = normalize_phone(phone)
+        await update_user_message_timestamp(normalized)
+        set_last_message_received_at()
+        await handle_message(normalized, text_body, audio_id=audio_id, image_id=image_id)
+    except Exception as e:
+        logger.error(f"[WEBHOOK] Handler error for {mask_phone(phone)}: {e}")
+
+
 @router.post("/webhook")
-async def receive_webhook(request: Request):
+async def receive_webhook(request: Request, background_tasks: BackgroundTasks):
     global _last_verified_at
 
     # Signature verification
@@ -55,22 +75,29 @@ async def receive_webhook(request: Request):
         if not verify_whatsapp_signature(payload_body, signature_header, WHATSAPP_WEBHOOK_SECRET):
             client_ip = request.client.host if request.client else "unknown"
             masked_ip = client_ip[:client_ip.rfind(".")] + ".***" if "." in client_ip else client_ip
-            logger.warning(f"[WEBHOOK] Signature verification FAILED | ip={masked_ip} | timestamp={datetime.now(timezone.utc).isoformat()}")
+            logger.warning(f"[WEBHOOK] Signature FAILED | ip={masked_ip} | ts={datetime.now(timezone.utc).isoformat()}")
             return Response(content='{"error":"signature_verification_failed"}', status_code=403, media_type="application/json")
         _last_verified_at = datetime.now(timezone.utc).isoformat()
         logger.debug("[WEBHOOK] Signature verified")
 
     try:
-        import json
         data = json.loads(payload_body)
     except Exception:
         return {"status": "invalid_json"}
 
+    # Return 200 immediately to Meta, process in background
     entries = data.get("entry", [])
     for entry in entries:
         changes = entry.get("changes", [])
         for change in changes:
             value = change.get("value", {})
+
+            # Handle status updates (delivery receipts)
+            statuses = value.get("statuses", [])
+            for status in statuses:
+                logger.debug(f"[WEBHOOK] Status update: {status.get('status')} for {mask_phone(status.get('recipient_id', ''))}")
+
+            # Handle incoming messages
             messages = value.get("messages", [])
             for msg in messages:
                 phone = msg.get("from", "")
@@ -85,6 +112,8 @@ async def receive_webhook(request: Request):
                     audio_id = msg.get("audio", {}).get("id")
                 elif msg_type == "image":
                     image_id = msg.get("image", {}).get("id")
+                elif msg_type == "document":
+                    logger.info(f"[WEBHOOK] Document received from {mask_phone(phone)} (not processed)")
                 elif msg_type == "interactive":
                     interactive = msg.get("interactive", {})
                     if interactive.get("type") == "list_reply":
@@ -93,9 +122,9 @@ async def receive_webhook(request: Request):
                         text_body = interactive.get("button_reply", {}).get("id", "")
 
                 if phone and (text_body or audio_id or image_id):
-                    try:
-                        await handle_message(phone, text_body, audio_id=audio_id, image_id=image_id)
-                    except Exception as e:
-                        logger.error(f"Handler error for {phone}: {e}")
+                    # Process asynchronously in background
+                    background_tasks.add_task(
+                        _process_message_async, phone, text_body, audio_id, image_id
+                    )
 
     return {"status": "ok"}
