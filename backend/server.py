@@ -47,16 +47,23 @@ async def lifespan(app: FastAPI):
     await db.bookings.create_index("phone")
     await db.rate_limits.create_index("timestamp", expireAfterSeconds=3600)
     await db.rate_limits.create_index([("phone", 1), ("action", 1)])
+    # Phase II: Shadow Profile indexes
+    await db.shadow_profiles.create_index("phone_number", unique=True)
+    await db.shadow_profiles.create_index("user_id", unique=True)
+    await db.shadow_profiles.create_index("whatsapp_id", sparse=True)
+    await db.shadow_profiles.create_index("telegram_id", sparse=True)
 
     # Log environment modes
-    from config import get_duffel_mode, get_momo_mode, get_moov_mode, get_stripe_mode, WHATSAPP_WEBHOOK_SECRET, WHATSAPP_PHONE_ID, WHATSAPP_TOKEN
+    from config import get_duffel_mode, get_momo_mode, get_moov_mode, get_stripe_mode, WHATSAPP_WEBHOOK_SECRET, WHATSAPP_PHONE_ID, WHATSAPP_TOKEN, CELTIIS_API_KEY
     duffel_mode = get_duffel_mode()
     momo_mode = get_momo_mode()
     moov_mode = get_moov_mode()
     stripe_mode = get_stripe_mode()
+    celtiis_mode = "PRODUCTION" if (CELTIIS_API_KEY and CELTIIS_API_KEY != 'your_key_here') else "MOCK"
     wa_configured = WHATSAPP_PHONE_ID and WHATSAPP_TOKEN and WHATSAPP_PHONE_ID != 'your_phone_id_here'
 
     logger.info(f"[DUFFEL] Mode: {duffel_mode}" + (" (real flights)" if duffel_mode == "PRODUCTION" else " (test data)" if duffel_mode == "SANDBOX" else " (no key configured)"))
+    logger.info(f"[PAYMENTS] Celtiis Cash: {celtiis_mode} (Benin priority)")
     logger.info(f"[PAYMENTS] MTN MoMo: {momo_mode}")
     logger.info(f"[PAYMENTS] Moov Money: {moov_mode}")
     logger.info(f"[PAYMENTS] Stripe: {stripe_mode}")

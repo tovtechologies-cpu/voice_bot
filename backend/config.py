@@ -24,6 +24,20 @@ WHATSAPP_BUSINESS_PHONE = os.environ.get('WHATSAPP_BUSINESS_PHONE', '')
 WHATSAPP_COUNTRY = os.environ.get('WHATSAPP_COUNTRY', 'BJ')
 WHATSAPP_COUNTRY_CODE = os.environ.get('WHATSAPP_COUNTRY_CODE', '229')
 
+# Telegram (stub — token provided in Phase B)
+TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
+TELEGRAM_WEBHOOK_SECRET = os.environ.get('TELEGRAM_WEBHOOK_SECRET', '')
+
+# Celtiis Cash
+CELTIIS_API_KEY = os.environ.get('CELTIIS_API_KEY', '')
+CELTIIS_API_URL = os.environ.get('CELTIIS_API_URL', 'https://api.celtiis.bj')
+
+# IP Geolocation
+IPINFO_API_KEY = os.environ.get('IPINFO_API_KEY', '')
+
+# Human-in-the-loop
+HUMAN_REVIEW_WEBHOOK = os.environ.get('HUMAN_REVIEW_WEBHOOK', '')
+
 # AI
 EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
 
@@ -103,10 +117,17 @@ def get_stripe_mode() -> str:
 # Constants
 API_TIMEOUT = 10.0
 EUR_TO_XOF = 655.957
-TRAVELIOO_FEE = 15.0
 SESSION_TIMEOUT_MINUTES = 30
 MAX_THIRD_PARTY_PROFILES = 5
 WHATSAPP_MSG_LIMIT = 900
+SPLIT_PAYMENT_RECONCILIATION_FEE_EUR = 2.0
+SPLIT_PAYMENT_RECONCILIATION_FEE_XOF = 1300
+PRICE_LOCK_MINUTES = 10
+
+# CFA zone countries (fixed rate 1 EUR = 655.957 XOF)
+CFA_COUNTRIES = {"BJ", "TG", "SN", "CI", "ML", "BF", "NE", "GW", "CM", "CF", "TD", "CG", "GA", "GQ"}
+UEMOA_COUNTRIES = {"BJ", "TG", "SN", "CI", "ML", "BF", "NE", "GW"}
+SADC_COUNTRIES = {"ZA", "BW", "MZ", "ZW", "ZM", "MW", "AO", "NA", "TZ", "CD"}
 
 # Directories
 TICKETS_DIR = ROOT_DIR / 'tickets'

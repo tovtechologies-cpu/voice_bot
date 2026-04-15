@@ -1,7 +1,6 @@
 """Message formatting for WhatsApp responses."""
 from typing import Dict
-from config import TRAVELIOO_FEE
-from models import PaymentOperator
+from models import PaymentOperator, format_price_display
 from services.airport import get_city_name
 from utils.helpers import eur_to_xof
 

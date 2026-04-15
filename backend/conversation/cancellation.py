@@ -4,12 +4,11 @@ import uuid
 import os
 from typing import Dict
 from datetime import datetime, timezone
-from models import ConversationState, PaymentOperator, calculate_refund
+from models import ConversationState, PaymentOperator, calculate_refund, calculate_travelioo_fee, format_price_display
 from services.session import update_session, clear_session
 from services.whatsapp import send_whatsapp_message
 from services.airport import get_city_name
 from utils.helpers import mask_phone, format_timestamp_gmt1, eur_to_xof
-from config import TRAVELIOO_FEE
 from database import db
 
 logger = logging.getLogger("CancellationHandler")
@@ -63,6 +62,7 @@ async def handle_cancellation_identify(phone: str, text: str, session: Dict, lan
     masked = mask_phone(phone)
     payment_display = booking.get("payment_method", "N/A")
     price = booking.get("price_eur", 0)
+    travelioo_fee = refund_info.get("travelioo_fee", booking.get("travelioo_fee_eur", calculate_travelioo_fee(booking.get("gds_price_eur", price))))
 
     if refund_info["case"] == "non_refundable":
         summary = booking.get("fare_conditions_summary", "")
@@ -108,7 +108,7 @@ This date has passed.
 
 Montant paye : {price}EUR
 - Penalite compagnie : -{penalty}EUR
-- Frais Travelioo : -{TRAVELIOO_FEE}EUR (non remboursables)
+- Frais Travelioo : -{travelioo_fee}EUR (non remboursables)
 ---
 *Total rembourse : {refund}EUR* ({refund_xof:,} XOF)
 
@@ -122,7 +122,7 @@ Delai : 5 a 10 jours ouvres
 
 Amount paid: {price}EUR
 - Airline penalty: -{penalty}EUR
-- Travelioo fee: -{TRAVELIOO_FEE}EUR (non-refundable)
+- Travelioo fee: -{travelioo_fee}EUR (non-refundable)
 ---
 *Total refunded: {refund}EUR* ({refund_xof:,} XOF)
 
@@ -139,7 +139,7 @@ Delay: 5 to 10 business days
             msg = f"""*Remboursement integral*
 
 Montant paye : {price}EUR
-- Frais Travelioo : -{TRAVELIOO_FEE}EUR (non remboursables)
+- Frais Travelioo : -{travelioo_fee}EUR (non remboursables)
 ---
 *Total rembourse : {refund}EUR* ({refund_xof:,} XOF)
 
@@ -151,7 +151,7 @@ Delai : 3 a 5 jours ouvres
             msg = f"""*Full refund*
 
 Amount paid: {price}EUR
-- Travelioo fee: -{TRAVELIOO_FEE}EUR (non-refundable)
+- Travelioo fee: -{travelioo_fee}EUR (non-refundable)
 ---
 *Total refunded: {refund}EUR* ({refund_xof:,} XOF)
 

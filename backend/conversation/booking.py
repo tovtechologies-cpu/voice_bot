@@ -4,19 +4,18 @@ import uuid
 import asyncio
 from typing import Dict
 from datetime import datetime, timezone
-from models import ConversationState, PaymentOperator, get_fare_conditions
+from models import ConversationState, get_fare_conditions
 from services.session import update_session, clear_session, get_passenger_by_id
 from services.whatsapp import send_whatsapp_message, send_whatsapp_document
 from services.flight import search_flights, categorize_flights, eur_to_xof
 from services.airport import resolve_airport, get_city_name, suggest_airports
 from services.date_parser import parse_date, generate_date_options
 from services.ai import parse_travel_intent
-from services.payment import payment_service
 from services.ticket import generate_ticket_pdf
 from services.security import check_rate_limit, check_payment_velocity
 from utils.helpers import generate_booking_ref, mask_phone, format_timestamp_gmt1
 from utils.formatting import (
-    format_flight_options_message, format_payment_method_selection,
+    format_flight_options_message,
     format_card_payment_link, format_payment_success, format_payment_failed,
     format_retry_options, format_booking_confirmed
 )
@@ -155,6 +154,11 @@ async def handle_flight_selection(phone: str, text: str, session: Dict, lang: st
     departure_date = selected.get("departure_time", "").split("T")[0]
     fare = get_fare_conditions(departure_date)
 
+    # Dynamic pricing — tiered Travelioo fee
+    from models import apply_travelioo_pricing, format_price_display
+    gds_base = selected.get("base_price", selected["final_price"])
+    pricing = apply_travelioo_pricing(gds_base)
+
     booking_ref = generate_booking_ref()
     booking = {
         "id": str(uuid.uuid4()),
@@ -168,11 +172,14 @@ async def handle_flight_selection(phone: str, text: str, session: Dict, lang: st
         "origin": selected["origin"],
         "destination": selected["destination"],
         "departure_date": departure_date,
-        "price_eur": selected["final_price"],
-        "price_xof": selected["price_xof"],
+        "gds_price_eur": pricing["gds_price_eur"],
+        "travelioo_fee_eur": pricing["travelioo_fee_eur"],
+        "price_eur": pricing["total_eur"],
+        "price_xof": eur_to_xof(pricing["total_eur"]),
         "category": selected["category"],
         "status": "awaiting_payment",
         "payment_method": None,
+        "payment_driver": None,
         "duffel_offer_id": selected.get("duffel_offer_id"),
         "fare_conditions_raw": fare.get("conditions_raw", ""),
         "fare_conditions_summary": fare.get("conditions_summary", ""),
@@ -188,14 +195,40 @@ async def handle_flight_selection(phone: str, text: str, session: Dict, lang: st
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     await db.bookings.insert_one(booking)
+
+    # Get country-aware payment menu
+    country = session.get("_country_code", "BJ")
+    from payment_drivers.router import get_payment_menu_for_country
+    menu = get_payment_menu_for_country(country, lang)
+
+    # Format payment selection message with fee breakdown
+    price_display = format_price_display(pricing["total_eur"], country)
+    fee_display = format_price_display(pricing["travelioo_fee_eur"], country)
+    if lang == "fr":
+        msg = "*Choisissez votre moyen de paiement*\n"
+        msg += f"Prix vol : {format_price_display(pricing['gds_price_eur'], country)}\n"
+        msg += f"Frais Travelioo : {fee_display}\n"
+        msg += f"*Total : {price_display}*\n\n"
+    else:
+        msg = "*Choose your payment method*\n"
+        msg += f"Flight price: {format_price_display(pricing['gds_price_eur'], country)}\n"
+        msg += f"Travelioo fee: {fee_display}\n"
+        msg += f"*Total: {price_display}*\n\n"
+    for item in menu:
+        msg += f"{item['index']} {item['label']}\n"
+    msg += f"\n{'Repondez' if lang == 'fr' else 'Reply'} " + ", ".join(str(m["index"]) for m in menu)
+
     await update_session(phone, {
         "state": ConversationState.AWAITING_PAYMENT_METHOD,
         "selected_flight": selected,
         "booking_id": booking["id"],
         "booking_ref": booking_ref,
-        "_fare_conditions": {"summary": fare.get("conditions_summary", ""), "raw": fare.get("conditions_raw", ""), "refundable": fare.get("refundable", "NO")}
+        "_fare_conditions": {"summary": fare.get("conditions_summary", ""), "raw": fare.get("conditions_raw", ""), "refundable": fare.get("refundable", "NO")},
+        "_payment_menu": [m["driver_name"] for m in menu],
+        "_pricing": pricing,
+        "_country_code": country,
     })
-    await send_whatsapp_message(phone, format_payment_method_selection(selected["final_price"], lang))
+    await send_whatsapp_message(phone, msg)
 
 
 async def handle_payment_method(phone: str, text: str, session: Dict, lang: str):
@@ -208,18 +241,33 @@ async def handle_payment_method(phone: str, text: str, session: Dict, lang: str)
         await send_whatsapp_message(phone, msg)
         return
 
-    operator = None
-    if text in ["1", "mtn", "momo", "mtn momo"]:
-        operator = PaymentOperator.MTN_MOMO
-    elif text in ["2", "moov", "flooz", "moov money"]:
-        operator = PaymentOperator.MOOV_MONEY
-    elif text in ["3", "google", "google pay", "gpay"]:
-        operator = PaymentOperator.GOOGLE_PAY
-    elif text in ["4", "apple", "apple pay", "apay"]:
-        operator = PaymentOperator.APPLE_PAY
+    # Use the dynamic payment menu from session
+    payment_menu = session.get("_payment_menu", ["mtn_momo", "moov_money", "stripe"])
+    pricing = session.get("_pricing", {})
+    country = session.get("_country_code", "BJ")
 
-    if not operator:
-        msg = "Repondez 1, 2, 3 ou 4" if lang == "fr" else "Reply 1, 2, 3, or 4"
+    driver_name = None
+    try:
+        idx = int(text) - 1
+        if 0 <= idx < len(payment_menu):
+            driver_name = payment_menu[idx]
+    except (ValueError, TypeError):
+        pass
+
+    # Also accept text names
+    if not driver_name:
+        text_lower = text.lower()
+        name_map = {"celtiis": "celtiis_cash", "mtn": "mtn_momo", "momo": "mtn_momo",
+                     "moov": "moov_money", "flooz": "moov_money",
+                     "google": "stripe", "gpay": "stripe", "apple": "stripe", "apay": "stripe",
+                     "carte": "stripe", "card": "stripe", "stripe": "stripe"}
+        driver_name = name_map.get(text_lower)
+        if driver_name and driver_name not in payment_menu:
+            driver_name = None
+
+    if not driver_name:
+        max_opt = len(payment_menu)
+        msg = f"Repondez 1 a {max_opt}" if lang == "fr" else f"Reply 1 to {max_opt}"
         await send_whatsapp_message(phone, msg)
         return
 
@@ -230,16 +278,25 @@ async def handle_payment_method(phone: str, text: str, session: Dict, lang: str)
         await send_whatsapp_message(phone, msg)
         return
 
-    await db.bookings.update_one({"id": booking_id}, {"$set": {"payment_method": operator}})
-    await update_session(phone, {"selected_payment_method": operator, "state": ConversationState.AWAITING_PAYMENT_CONFIRM})
+    # Map driver name to operator for backward compat
+    from payment_drivers.router import get_driver
+    driver = get_driver(driver_name)
+    operator = driver_name
+
+    await db.bookings.update_one({"id": booking_id}, {"$set": {"payment_method": operator, "payment_driver": driver_name}})
+    await update_session(phone, {"selected_payment_method": operator, "_selected_driver": driver_name, "state": ConversationState.AWAITING_PAYMENT_CONFIRM})
 
     booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     passenger_name = booking.get("passenger_name", phone) if booking else phone
     fare_summary = session.get("_fare_conditions", {}).get("summary", "")
 
-    operator_names = {PaymentOperator.MTN_MOMO: "MTN MoMo", PaymentOperator.MOOV_MONEY: "Moov Money", PaymentOperator.GOOGLE_PAY: "Google Pay", PaymentOperator.APPLE_PAY: "Apple Pay"}
-    op_name = operator_names.get(operator, operator)
-    amount_xof = eur_to_xof(selected["final_price"])
+    op_name = driver.display_name if driver else operator
+    total_eur = pricing.get("total_eur", selected["final_price"])
+
+    from models import format_price_display
+    price_display = format_price_display(total_eur, country)
+    gds_display = format_price_display(pricing.get("gds_price_eur", total_eur), country)
+    fee_display = format_price_display(pricing.get("travelioo_fee_eur", 0), country)
 
     if lang == "fr":
         msg = f"""*Recapitulatif de votre paiement*
@@ -253,7 +310,9 @@ Methode : {op_name}
 *Conditions du billet :*
 {fare_summary}
 
-Montant : *{selected['final_price']}EUR* ({amount_xof:,} XOF)
+Prix vol : {gds_display}
+Frais Travelioo : {fee_display} (non remboursables)
+*Total : {price_display}*
 
 Lisez attentivement avant de confirmer.
 
@@ -272,7 +331,9 @@ Method: {op_name}
 *Ticket conditions:*
 {fare_summary}
 
-Amount: *{selected['final_price']}EUR* ({amount_xof:,} XOF)
+Flight price: {gds_display}
+Travelioo fee: {fee_display} (non-refundable)
+*Total: {price_display}*
 
 Read carefully before confirming.
 
@@ -306,26 +367,47 @@ async def execute_payment(phone: str, session: Dict, lang: str):
     selected = session.get("selected_flight")
     booking_ref = session.get("booking_ref")
     booking_id = session.get("booking_id")
-    operator = session.get("selected_payment_method")
+    driver_name = session.get("_selected_driver")
+    pricing = session.get("_pricing", {})
+    country = session.get("_country_code", "BJ")
+    total_eur = pricing.get("total_eur", selected.get("final_price", 0))
 
-    result = await payment_service.request_payment(operator=operator, phone=phone, amount_eur=selected["final_price"], booking_id=booking_ref, destination=get_city_name(selected["destination"]))
+    from payment_drivers.router import get_driver
+    from models import format_price_display
+    driver = get_driver(driver_name)
 
-    if result.get("status") == "error":
-        await send_whatsapp_message(phone, format_payment_failed(operator, lang))
-        await send_whatsapp_message(phone, format_retry_options(operator, lang))
+    if not driver:
+        logger.error(f"Unknown payment driver: {driver_name}")
+        msg = "Methode de paiement indisponible. Veuillez reessayer." if lang == "fr" else "Payment method unavailable. Please try again."
+        await send_whatsapp_message(phone, msg)
+        await update_session(phone, {"state": ConversationState.AWAITING_PAYMENT_METHOD})
+        return
+
+    # Use new payment driver architecture
+    is_mobile = driver_name in ["celtiis_cash", "mtn_momo", "moov_money"]
+    currency = "XOF" if is_mobile else "EUR"
+    amount = eur_to_xof(total_eur) if is_mobile else total_eur
+
+    result = await driver.initiate_payment(
+        phone=phone, amount=amount, currency=currency,
+        reference=booking_ref, metadata={"booking_id": booking_id})
+
+    if not result.success:
+        await send_whatsapp_message(phone, format_payment_failed(driver_name, lang))
+        await send_whatsapp_message(phone, format_retry_options(driver_name, lang))
         await update_session(phone, {"state": "retry"})
         return
 
-    await update_session(phone, {"payment_reference": result.get("reference_id")})
+    await update_session(phone, {"payment_reference": result.reference})
+    await db.bookings.update_one({"id": booking_id}, {"$set": {"payment_reference": result.reference}})
 
-    if operator in [PaymentOperator.MTN_MOMO, PaymentOperator.MOOV_MONEY]:
-        amount_xof = eur_to_xof(selected["final_price"])
-        operator_names = {PaymentOperator.MTN_MOMO: "MTN MoMo", PaymentOperator.MOOV_MONEY: "Moov Money"}
-        op_name = operator_names.get(operator, operator)
+    if is_mobile:
+        op_name = driver.display_name
+        price_display = format_price_display(total_eur, country)
         if lang == "fr":
             msg = f"""*Notification envoyee !*
 
-Montant : *{selected['final_price']}EUR* ({amount_xof:,} XOF)
+Montant : *{price_display}*
 Methode : {op_name}
 
 Ouvrez {op_name} et confirmez avec votre PIN / mot de passe.
@@ -334,7 +416,7 @@ Vous avez *30 secondes*..."""
         else:
             msg = f"""*Notification sent!*
 
-Amount: *{selected['final_price']}EUR* ({amount_xof:,} XOF)
+Amount: *{price_display}*
 Method: {op_name}
 
 Open {op_name} and confirm with your PIN / password.
@@ -342,9 +424,18 @@ Open {op_name} and confirm with your PIN / password.
 You have *30 seconds*..."""
         await send_whatsapp_message(phone, msg)
         await update_session(phone, {"state": ConversationState.AWAITING_MOBILE_PAYMENT})
-        asyncio.create_task(poll_and_complete_payment(phone, booking_id, booking_ref, operator, result["reference_id"], lang))
+        asyncio.create_task(poll_and_complete_payment_v2(phone, booking_id, booking_ref, driver_name, result.reference, lang))
     else:
-        await send_whatsapp_message(phone, format_card_payment_link(result["payment_url"], lang))
+        # Card payment (Stripe)
+        payment_url = result.raw.get("client_secret", "")
+        if payment_url:
+            await send_whatsapp_message(phone, format_card_payment_link(payment_url, lang))
+        else:
+            if lang == "fr":
+                msg = f"Paiement en cours de traitement. Reference: {result.reference}"
+            else:
+                msg = f"Payment being processed. Reference: {result.reference}"
+            await send_whatsapp_message(phone, msg)
         await update_session(phone, {"state": ConversationState.AWAITING_CARD_PAYMENT})
 
 
@@ -358,7 +449,18 @@ async def handle_retry(phone: str, text: str, session: Dict, lang: str):
         selected = session.get("selected_flight")
         if selected:
             await update_session(phone, {"state": ConversationState.AWAITING_PAYMENT_METHOD, "_test_force_fail": False})
-            await send_whatsapp_message(phone, format_payment_method_selection(selected["final_price"], lang))
+            # Re-display dynamic payment menu
+            country = session.get("_country_code", "BJ")
+            pricing = session.get("_pricing", {})
+            total = pricing.get("total_eur", selected.get("final_price", 0))
+            from payment_drivers.router import get_payment_menu_for_country
+            from models import format_price_display
+            menu = get_payment_menu_for_country(country, lang)
+            msg = f"*{'Choisissez votre moyen de paiement' if lang == 'fr' else 'Choose your payment method'}*\n*Total : {format_price_display(total, country)}*\n\n"
+            for item in menu:
+                msg += f"{item['index']} {item['label']}\n"
+            await update_session(phone, {"_payment_menu": [m["driver_name"] for m in menu]})
+            await send_whatsapp_message(phone, msg)
         else:
             await clear_session(phone)
     elif text == "3":
@@ -369,62 +471,74 @@ async def handle_retry(phone: str, text: str, session: Dict, lang: str):
         await send_whatsapp_message(phone, format_retry_options(last_operator or "payment", lang))
 
 
-async def poll_and_complete_payment(phone: str, booking_id: str, booking_ref: str, operator: str, reference_id: str, lang: str):
-    operator_names = {PaymentOperator.MTN_MOMO: "MTN MoMo", PaymentOperator.MOOV_MONEY: "Moov Money"}
-    op_name = operator_names.get(operator, operator)
+async def poll_and_complete_payment_v2(phone: str, booking_id: str, booking_ref: str,
+                                       driver_name: str, reference: str, lang: str):
+    """Poll payment status using new payment driver architecture."""
+    from payment_drivers.router import get_driver
+    from models import format_price_display
+    from services.shadow_profile import add_to_travel_history, add_payment_method
+
+    driver = get_driver(driver_name)
+    if not driver:
+        logger.error(f"Unknown driver {driver_name} for polling")
+        return
+
+    op_name = driver.display_name
+
+    # Check test force-fail flag
+    session = await db.sessions.find_one({"phone": phone}, {"_id": 0})
+    force_fail = session.get("_test_force_fail", False) if session else False
 
     for attempt in range(10):
         await asyncio.sleep(3)
-        status = await payment_service._check_status(operator, reference_id, phone=phone)
-        logger.info(f"Poll {attempt + 1}/10: {operator} {reference_id} = {status}")
 
-        if status in ["SUCCESSFUL", "SUCCESS", "COMPLETED"]:
+        if force_fail:
+            logger.info(f"Poll {attempt + 1}/10: {driver_name} {reference} = FORCED_FAIL (test mode)")
+            break
+
+        result = await driver.check_payment_status(reference)
+        logger.info(f"Poll {attempt + 1}/10: {driver_name} {reference} = {result.status}")
+
+        if result.status in ["SUCCESSFUL", "SUCCESS", "COMPLETED"]:
             booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
             if not booking:
                 return
             now_utc = datetime.now(timezone.utc)
-            await db.bookings.update_one({"id": booking_id}, {"$set": {"status": "confirmed", "payment_confirmed_at": now_utc.isoformat()}})
+            await db.bookings.update_one({"id": booking_id}, {"$set": {
+                "status": "confirmed", "payment_confirmed_at": now_utc.isoformat(),
+                "payment_driver": driver_name, "payment_reference": reference
+            }})
+
+            # Update shadow profile
+            await add_to_travel_history(phone, booking_ref)
+            await add_payment_method(phone, driver_name)
+
             ts = format_timestamp_gmt1(now_utc)
             masked = mask_phone(phone)
+            country = "BJ"  # Default
+            session = await db.sessions.find_one({"phone": phone}, {"_id": 0})
+            if session:
+                country = session.get("_country_code", "BJ")
+            price_display = format_price_display(booking.get("price_eur", 0), country)
+
             if lang == "fr":
-                msg = f"""*Paiement confirme !*
-
-{booking.get('price_eur')}EUR debites -- {op_name} ({masked})
-{ts} GMT+1
-Reservation : {booking_ref}
-
-Votre billet est en cours de generation..."""
+                msg = f"*Paiement confirme !*\n\n{price_display} debites -- {op_name} ({masked})\n{ts} GMT+1\nReservation : {booking_ref}\n\nVotre billet est en cours de generation..."
             else:
-                msg = f"""*Payment confirmed!*
-
-{booking.get('price_eur')}EUR debited -- {op_name} ({masked})
-{ts} GMT+1
-Booking: {booking_ref}
-
-Your ticket is being generated..."""
+                msg = f"*Payment confirmed!*\n\n{price_display} debited -- {op_name} ({masked})\n{ts} GMT+1\nBooking: {booking_ref}\n\nYour ticket is being generated..."
             await send_whatsapp_message(phone, msg)
+
             ticket_filename = generate_ticket_pdf(booking)
             await asyncio.sleep(2)
             fn = booking.get("passenger_name", "")
             if lang == "fr":
-                ticket_msg = f"""*Votre billet est pret !*
-{fn}
-{booking.get('origin')} -> {booking.get('destination')}
-{booking.get('departure_date')}
-{booking_ref}
-Bon voyage !"""
+                ticket_msg = f"*Votre billet est pret !*\n{fn}\n{booking.get('origin')} -> {booking.get('destination')}\n{booking.get('departure_date')}\n{booking_ref}\nBon voyage !"
             else:
-                ticket_msg = f"""*Your ticket is ready!*
-{fn}
-{booking.get('origin')} -> {booking.get('destination')}
-{booking.get('departure_date')}
-{booking_ref}
-Have a great trip!"""
+                ticket_msg = f"*Your ticket is ready!*\n{fn}\n{booking.get('origin')} -> {booking.get('destination')}\n{booking.get('departure_date')}\n{booking_ref}\nHave a great trip!"
             await send_whatsapp_document(phone, f"{APP_BASE_URL}/api/tickets/{ticket_filename}", ticket_filename, ticket_msg)
             await clear_session(phone)
             return
 
-        if status in ["FAILED", "REJECTED", "CANCELLED"]:
+        if result.status in ["FAILED", "REJECTED", "CANCELLED"]:
             break
 
         elapsed = (attempt + 1) * 3
@@ -437,15 +551,9 @@ Have a great trip!"""
 
     await db.bookings.update_one({"id": booking_id}, {"$set": {"status": "payment_failed"}})
     if lang == "fr":
-        msg = """Delai depasse.
-1 Renvoyer la notification
-2 Changer de methode de paiement
-3 Annuler la reservation"""
+        msg = "Delai depasse.\n1 Renvoyer la notification\n2 Changer de methode de paiement\n3 Annuler la reservation"
     else:
-        msg = """Timeout.
-1 Resend notification
-2 Change payment method
-3 Cancel booking"""
+        msg = "Timeout.\n1 Resend notification\n2 Change payment method\n3 Cancel booking"
     await send_whatsapp_message(phone, msg)
     await update_session(phone, {"state": "retry"})
 

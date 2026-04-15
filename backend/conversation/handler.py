@@ -11,7 +11,8 @@ from conversation.enrollment import (
     handle_enrollment_method_selection, handle_manual_first_name, handle_manual_last_name,
     handle_manual_passport, handle_profile_confirmation, handle_passport_scan,
     handle_travel_purpose, handle_third_party_selection, handle_save_tp_prompt,
-    handle_passenger_count, handle_passenger_count_prompt, handle_consent
+    handle_passenger_count, handle_passenger_count_prompt, handle_consent,
+    handle_ocr_correction
 )
 from conversation.booking import (
     handle_awaiting_destination, handle_awaiting_date, handle_flight_selection,
@@ -101,11 +102,48 @@ async def handle_message(phone: str, message_text: str, audio_id: str = None, im
         await handle_consent(phone, text, session, lang)
         return
 
+    # === DATA DELETION ===
+    if text.upper() in ["SUPPRIMER MES DONNEES", "SUPPRIMER MES DONNÉES", "DELETE MY DATA"]:
+        from services.whatsapp import send_whatsapp_message as _send
+        if lang == "fr":
+            msg = "Etes-vous sur de vouloir supprimer toutes vos donnees ? Cette action est irreversible.\n\n*1* Oui, supprimer tout\n*2* Non, annuler"
+        else:
+            msg = "Are you sure you want to delete all your data? This action is irreversible.\n\n*1* Yes, delete everything\n*2* No, cancel"
+        await update_session(phone, {"state": ConversationState.CONFIRMING_DELETION})
+        await send_whatsapp_message(phone, msg)
+        return
+
+    if state == ConversationState.CONFIRMING_DELETION:
+        if text in ["1", "oui", "yes"]:
+            from services.shadow_profile import delete_user_data
+            success = await delete_user_data(phone)
+            if success:
+                msg = "Toutes vos donnees ont ete supprimees." if lang == "fr" else "All your data has been deleted."
+            else:
+                msg = "Erreur lors de la suppression. Contactez support@travelioo.app" if lang == "fr" else "Deletion error. Contact support@travelioo.app"
+            await clear_session(phone)
+            await send_whatsapp_message(phone, msg)
+        else:
+            msg = "Suppression annulee." if lang == "fr" else "Deletion cancelled."
+            await clear_session(phone)
+            await send_whatsapp_message(phone, msg)
+        return
+
+    # === OCR CORRECTION STATES ===
+    if state in [ConversationState.CORRECTING_OCR, ConversationState.CORRECTING_TP_OCR]:
+        from conversation.enrollment import handle_ocr_correction
+        is_tp = state == ConversationState.CORRECTING_TP_OCR
+        await handle_ocr_correction(phone, original_text, session, lang, is_tp=is_tp)
+        return
+
     # === ENROLLMENT STATES ===
     if state == ConversationState.ENROLLMENT_METHOD:
         await handle_enrollment_method_selection(phone, text, session, lang)
         return
     if state == ConversationState.ENROLLING_SCAN:
+        if text == "3" or text.lower() in ["manuel", "manual"]:
+            await handle_enrollment_method_selection(phone, "3", session, lang)
+            return
         msg = "Envoyez une *photo* de votre passeport, ou tapez *3* pour la saisie manuelle." if lang == "fr" else "Send a *photo* of your passport, or type *3* for manual entry."
         await send_whatsapp_message(phone, msg)
         return
@@ -133,6 +171,9 @@ async def handle_message(phone: str, message_text: str, audio_id: str = None, im
         await handle_enrollment_method_selection(phone, text, session, lang, is_tp=True)
         return
     if state == ConversationState.ENROLLING_TP_SCAN:
+        if text == "3" or text.lower() in ["manuel", "manual"]:
+            await handle_enrollment_method_selection(phone, "3", session, lang, is_tp=True)
+            return
         msg = "Envoyez une *photo* du passeport, ou tapez *3* pour la saisie manuelle." if lang == "fr" else "Send a *photo* of the passport, or type *3* for manual entry."
         await send_whatsapp_message(phone, msg)
         return

@@ -16,7 +16,9 @@ logger = logging.getLogger("FlightService")
 
 
 def apply_travelioo_margin(base_price: float) -> float:
-    return round(base_price + 15 + (base_price * 0.05), 2)
+    from models import calculate_travelioo_fee
+    fee = calculate_travelioo_fee(base_price)
+    return round(base_price + fee, 2)
 
 
 def eur_to_xof(eur: float) -> int:

@@ -1,8 +1,11 @@
+"""Data models, conversation states, pricing, and Shadow Profiles."""
 import random
 from datetime import datetime, timedelta
-from config import TRAVELIOO_FEE
 
 
+# ---------------------------------------------------------------------------
+# Conversation States
+# ---------------------------------------------------------------------------
 class ConversationState:
     IDLE = "idle"
     NEW = "new"
@@ -36,10 +39,17 @@ class ConversationState:
     REFUND_FAILED = "refund_failed"
     MODIFICATION_REQUESTED = "modification_requested"
     MODIFICATION_CONFIRM = "modification_confirm"
-    # Legal consent
     AWAITING_CONSENT = "awaiting_consent"
+    # OCR correction states (Phase II)
+    CORRECTING_OCR = "correcting_ocr"
+    CORRECTING_TP_OCR = "correcting_tp_ocr"
+    # Data deletion (Phase II)
+    CONFIRMING_DELETION = "confirming_deletion"
 
 
+# ---------------------------------------------------------------------------
+# Payment Operators
+# ---------------------------------------------------------------------------
 class PaymentOperator:
     MTN_MOMO = "mtn_momo"
     MOOV_MONEY = "moov_money"
@@ -48,6 +58,49 @@ class PaymentOperator:
     CELTIIS_CASH = "celtiis_cash"
 
 
+# ---------------------------------------------------------------------------
+# Dynamic Pricing — official Travelioo fee grid
+# ---------------------------------------------------------------------------
+def calculate_travelioo_fee(gds_price_eur: float) -> float:
+    """Tiered Travelioo service fee. Non-refundable in all circumstances."""
+    if gds_price_eur < 200:
+        return 10.0
+    elif gds_price_eur <= 500:
+        return round(gds_price_eur * 0.08, 2)
+    else:
+        return round(gds_price_eur * 0.06, 2)
+
+
+def apply_travelioo_pricing(gds_price_eur: float) -> dict:
+    """Calculate full price breakdown with tiered fee."""
+    fee = calculate_travelioo_fee(gds_price_eur)
+    total = round(gds_price_eur + fee, 2)
+    return {
+        "gds_price_eur": round(gds_price_eur, 2),
+        "travelioo_fee_eur": fee,
+        "total_eur": total,
+    }
+
+
+def format_price_display(eur_amount: float, country_code: str = "BJ") -> str:
+    """Localized price display — EUR always first, local currency in parentheses."""
+    from config import CFA_COUNTRIES, EUR_TO_XOF
+    if country_code in CFA_COUNTRIES:
+        xof = round(eur_amount * EUR_TO_XOF)
+        return f"{eur_amount:.0f}EUR ({xof:,} XOF)"
+    elif country_code == "MA":
+        mad = round(eur_amount * 10.9)
+        return f"{eur_amount:.0f}EUR ({mad:,} MAD)"
+    elif country_code == "NG":
+        ngn = round(eur_amount * 1650)
+        return f"{eur_amount:.0f}EUR ({ngn:,} NGN)"
+    else:
+        return f"{eur_amount:.0f}EUR"
+
+
+# ---------------------------------------------------------------------------
+# Fare Conditions (mock profiles for sandbox)
+# ---------------------------------------------------------------------------
 MOCK_FARE_PROFILES = [
     {
         "name": "Budget",
@@ -83,7 +136,6 @@ MOCK_FARE_PROFILES = [
 
 
 def get_fare_conditions(departure_date: str = None) -> dict:
-    """Get fare conditions -- mock in sandbox, real from Duffel in production."""
     profile = random.choice(MOCK_FARE_PROFILES).copy()
     if departure_date and profile.get("refund_deadline_hours_before"):
         try:
@@ -99,8 +151,10 @@ def get_fare_conditions(departure_date: str = None) -> dict:
 
 
 def calculate_refund(booking: dict) -> dict:
-    """Calculate refund based on fare conditions and Travelioo fee policy."""
+    """Calculate refund. Travelioo fee is NEVER refunded."""
     price_eur = booking.get("price_eur", 0)
+    gds_price = booking.get("gds_price_eur") or price_eur
+    travelioo_fee = booking.get("travelioo_fee_eur") or calculate_travelioo_fee(gds_price)
     refundable = booking.get("refundable", "NO")
     penalty = booking.get("refund_penalty_eur") or 0
     deadline_str = booking.get("refund_deadline")
@@ -115,13 +169,26 @@ def calculate_refund(booking: dict) -> dict:
             pass
 
     if refundable == "NO":
-        return {"case": "non_refundable", "refund_eur": 0, "deadline_passed": False}
+        return {"case": "non_refundable", "refund_eur": 0, "travelioo_fee": travelioo_fee, "deadline_passed": False}
     if deadline_passed:
-        return {"case": "deadline_passed", "refund_eur": 0, "deadline_passed": True, "deadline": deadline_str}
+        return {"case": "deadline_passed", "refund_eur": 0, "travelioo_fee": travelioo_fee, "deadline_passed": True, "deadline": deadline_str}
     if refundable == "YES":
-        refund = price_eur - TRAVELIOO_FEE
-        return {"case": "fully_refundable", "refund_eur": round(refund, 2), "deadline_passed": False}
+        refund = gds_price  # Only GDS price is refunded, NOT travelioo fee
+        return {"case": "fully_refundable", "refund_eur": round(refund, 2), "travelioo_fee": travelioo_fee, "deadline_passed": False}
     if refundable == "PARTIAL":
-        refund = max(0, price_eur - penalty - TRAVELIOO_FEE)
-        return {"case": "partial_refund", "refund_eur": round(refund, 2), "airline_penalty": penalty, "deadline_passed": False}
-    return {"case": "non_refundable", "refund_eur": 0, "deadline_passed": False}
+        refund = max(0, gds_price - penalty)  # Refund GDS base minus airline penalty
+        return {"case": "partial_refund", "refund_eur": round(refund, 2), "airline_penalty": penalty, "travelioo_fee": travelioo_fee, "deadline_passed": False}
+    return {"case": "non_refundable", "refund_eur": 0, "travelioo_fee": travelioo_fee, "deadline_passed": False}
+
+
+# ---------------------------------------------------------------------------
+# OCR field labels for interactive correction
+# ---------------------------------------------------------------------------
+FIELD_LABELS = {
+    "firstName": "Prenom / First name",
+    "lastName": "Nom de famille / Last name",
+    "passportNumber": "Numero de passeport / Passport number",
+    "nationality": "Nationalite / Nationality",
+    "dateOfBirth": "Date de naissance / Date of birth",
+    "expiryDate": "Date d'expiration / Expiry date",
+}

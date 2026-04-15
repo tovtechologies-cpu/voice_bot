@@ -17,8 +17,11 @@ logger = logging.getLogger("EnrollmentHandler")
 async def handle_consent(phone: str, text: str, session: Dict, lang: str):
     """Handle GDPR consent response."""
     if text in ["1", "oui", "yes", "ok", "accepte", "accept", "j'accepte"]:
-        # Consent granted — record and proceed to enrollment
+        # Consent granted — record, create shadow profile, and proceed to enrollment
+        from services.shadow_profile import get_or_create_shadow_profile, update_shadow_profile
         await update_session(phone, {"_consent_granted": True, "_consent_at": __import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat()})
+        await get_or_create_shadow_profile(phone, channel="whatsapp")
+        await update_shadow_profile(phone, {"consent_granted": True, "consent_at": __import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat(), "language_pref": lang})
         await _show_enrollment_menu(phone, lang, is_tp=False)
     elif text in ["2", "non", "no"]:
         if lang == "fr":
@@ -184,6 +187,12 @@ async def handle_profile_confirmation(phone: str, text: str, session: Dict, lang
                 "expiryDate": enrollment.get("expiryDate"), "created_by_phone": phone
             })
             await update_session(phone, {"passenger_id": passenger_id, "booking_passenger_id": passenger_id, "enrollment_data": {}})
+            # Update shadow profile with passenger data
+            from services.shadow_profile import update_shadow_profile
+            await update_shadow_profile(phone, {
+                "passenger_id": passenger_id,
+                "country_code": session.get("_country_code", "BJ"),
+            })
             msg = "Profil enregistre. Vous n'aurez plus a ressaisir ces informations la prochaine fois." if lang == "fr" else "Profile saved. You won't need to enter this information again."
             await send_whatsapp_message(phone, msg)
             passenger = await get_passenger_by_id(passenger_id)
@@ -233,20 +242,21 @@ async def handle_passport_scan(phone: str, image_id: str, state: str, session: D
         await update_session(phone, {"state": method_state})
         await send_whatsapp_message(phone, msg)
         return
+
     enrollment = {k: data.get(k) for k in ["firstName", "lastName", "passportNumber", "nationality", "dateOfBirth", "expiryDate"]}
-    if data.get("partial"):
-        if not enrollment.get("firstName"):
-            fn_state = ConversationState.ENROLLING_TP_MANUAL_FN if is_tp else ConversationState.ENROLLING_MANUAL_FN
-            await update_session(phone, {"state": fn_state, "enrollment_data": enrollment})
-            msg = "Nom partiellement detecte. Quel est le prenom ?" if lang == "fr" else "Name partially detected. What is the first name?"
-            await send_whatsapp_message(phone, msg)
-            return
-        if not enrollment.get("lastName"):
-            ln_state = ConversationState.ENROLLING_TP_MANUAL_LN if is_tp else ConversationState.ENROLLING_MANUAL_LN
-            await update_session(phone, {"state": ln_state, "enrollment_data": enrollment})
-            msg = "Nom de famille non detecte. Quel est le nom de famille ?" if lang == "fr" else "Last name not detected. What is the last name?"
-            await send_whatsapp_message(phone, msg)
-            return
+
+    # Interactive OCR Rebound — identify missing fields
+    required_fields = ["firstName", "lastName"]
+    optional_fields = ["passportNumber", "nationality", "dateOfBirth", "expiryDate"]
+    missing = [f for f in required_fields if not enrollment.get(f)]
+    missing += [f for f in optional_fields if not enrollment.get(f) and data.get("partial")]
+
+    if missing:
+        # Start interactive correction flow instead of hard fallback
+        await start_ocr_correction(phone, enrollment, missing, lang, is_tp=is_tp)
+        return
+
+    # Perfect scan — go to confirmation
     confirm_state = ConversationState.CONFIRMING_TP_PROFILE if is_tp else ConversationState.CONFIRMING_PROFILE
     await update_session(phone, {"state": confirm_state, "enrollment_data": enrollment})
     await send_profile_confirmation(phone, enrollment, lang)
@@ -377,4 +387,106 @@ async def handle_passenger_count(phone: str, text: str, session: Dict, lang: str
         msg = "Ou souhaitez-vous aller ?\n_\"Je veux un vol pour Paris vendredi prochain\"_"
     else:
         msg = "Where would you like to go?\n_\"I need a flight to Paris next Friday\"_"
+    await send_whatsapp_message(phone, msg)
+
+
+# ---------------------------------------------------------------------------
+# Interactive OCR Rebound — correction flow for partial OCR scans
+# ---------------------------------------------------------------------------
+async def start_ocr_correction(phone: str, ocr_data: Dict, missing_fields: list,
+                                lang: str, is_tp: bool = False):
+    """Send interactive correction message for partially-read passport data."""
+    from models import FIELD_LABELS
+    if lang == "fr":
+        msg = "J'ai lu votre passeport mais quelques informations sont manquantes ou illisibles.\nPouvez-vous les confirmer ?\n\n"
+    else:
+        msg = "I read your passport but some information is missing or unreadable.\nPlease confirm:\n\n"
+
+    for field in missing_fields:
+        label = FIELD_LABELS.get(field, field)
+        msg += f"? {label}: ___\n"
+
+    if lang == "fr":
+        msg += "\nRepondez en indiquant les valeurs dans l'ordre, separees par des virgules.\nExemple : Jean, AB1234567"
+    else:
+        msg += "\nReply with the values in order, separated by commas.\nExample: Jean, AB1234567"
+
+    correction_state = ConversationState.CORRECTING_TP_OCR if is_tp else ConversationState.CORRECTING_OCR
+    await update_session(phone, {
+        "state": correction_state,
+        "enrollment_data": ocr_data,
+        "_ocr_missing_fields": missing_fields,
+    })
+    await send_whatsapp_message(phone, msg)
+
+
+async def handle_ocr_correction(phone: str, text: str, session: Dict, lang: str, is_tp: bool = False):
+    """Process user's corrections for partially-read passport data."""
+    missing_fields = session.get("_ocr_missing_fields", [])
+    enrollment = session.get("enrollment_data", {})
+
+    # Parse comma-separated values
+    values = [v.strip() for v in text.split(",")]
+    if len(values) < len(missing_fields):
+        # Try splitting by newlines too
+        values = [v.strip() for v in text.replace("\n", ",").split(",") if v.strip()]
+
+    if len(values) < len(missing_fields):
+        if lang == "fr":
+            msg = f"J'ai besoin de {len(missing_fields)} valeur(s). Repondez avec les valeurs separees par des virgules."
+        else:
+            msg = f"I need {len(missing_fields)} value(s). Reply with values separated by commas."
+        await send_whatsapp_message(phone, msg)
+        return
+
+    for i, field in enumerate(missing_fields):
+        val = values[i] if i < len(values) else ""
+        if field == "firstName":
+            enrollment["firstName"] = title_case_name(val)
+        elif field == "lastName":
+            enrollment["lastName"] = title_case_name(val)
+        elif field == "passportNumber":
+            enrollment["passportNumber"] = val.upper()
+        elif field == "nationality":
+            enrollment["nationality"] = val.title()
+        elif field == "dateOfBirth":
+            enrollment["dateOfBirth"] = val
+        elif field == "expiryDate":
+            enrollment["expiryDate"] = val
+
+    # Build visual summary card
+    fn = enrollment.get("firstName", "")
+    ln = enrollment.get("lastName", "")
+    pp = enrollment.get("passportNumber") or ("Non renseigne" if lang == "fr" else "N/A")
+    nat = enrollment.get("nationality") or ("Non renseigne" if lang == "fr" else "N/A")
+    dob = enrollment.get("dateOfBirth") or "-"
+    exp = enrollment.get("expiryDate") or "-"
+
+    if lang == "fr":
+        msg = f"""*Profil passager*
+
+Prenom : {fn}
+Nom : {ln}
+Passeport : {pp}
+Nationalite : {nat}
+Naissance : {dob}
+Expiration : {exp}
+
+*1* Confirmer
+*2* Corriger"""
+    else:
+        msg = f"""*Passenger Profile*
+
+First name: {fn}
+Last name: {ln}
+Passport: {pp}
+Nationality: {nat}
+DOB: {dob}
+Expiry: {exp}
+
+*1* Confirm
+*2* Correct"""
+
+    confirm_state = ConversationState.CONFIRMING_TP_PROFILE if is_tp else ConversationState.CONFIRMING_PROFILE
+    await update_session(phone, {"state": confirm_state, "enrollment_data": enrollment})
     await send_whatsapp_message(phone, msg)
