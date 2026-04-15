@@ -68,10 +68,12 @@ def fallback_parse_intent(text: str, language: str) -> Dict:
 
 
 def detect_language(text: str) -> str:
-    french_words = ["je", "veux", "aller", "pour", "le", "la", "un", "une", "merci", "bonjour", "oui", "non", "vol", "billet"]
-    text_lower = text.lower()
-    french_count = sum(1 for word in french_words if f" {word} " in f" {text_lower} " or text_lower.startswith(word) or text_lower.endswith(word))
-    return "fr" if french_count >= 1 else "en"
+    """Detect language — delegates to extended detector for 7-language support."""
+    from services.translation import detect_language_extended
+    lang = detect_language_extended(text)
+    # Map African languages to display as "fr" for response generation
+    # (the actual source language is tracked separately for translation)
+    return lang
 
 
 def parse_yes_no(text: str) -> str:

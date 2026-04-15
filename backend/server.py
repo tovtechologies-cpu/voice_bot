@@ -52,6 +52,10 @@ async def lifespan(app: FastAPI):
     await db.shadow_profiles.create_index("user_id", unique=True)
     await db.shadow_profiles.create_index("whatsapp_id", sparse=True)
     await db.shadow_profiles.create_index("telegram_id", sparse=True)
+    # Phase C: HITL indexes
+    await db.hitl_reviews.create_index("review_id", unique=True)
+    await db.hitl_reviews.create_index("status")
+    await db.hitl_reviews.create_index("phone")
 
     # Log environment modes
     from config import get_duffel_mode, get_momo_mode, get_moov_mode, get_stripe_mode, WHATSAPP_WEBHOOK_SECRET, WHATSAPP_PHONE_ID, WHATSAPP_TOKEN, CELTIIS_API_KEY
@@ -75,11 +79,22 @@ async def lifespan(app: FastAPI):
 
     # Start periodic cleanup
     cleanup_task = asyncio.create_task(periodic_cleanup())
+    # Start disruption monitoring (check every 15 minutes)
+    async def periodic_disruption_check():
+        while True:
+            try:
+                from services.disruption import monitor_active_bookings
+                await monitor_active_bookings()
+            except Exception as e:
+                logger.error(f"Disruption monitor error: {e}")
+            await asyncio.sleep(900)  # Every 15 minutes
+    disruption_task = asyncio.create_task(periodic_disruption_check())
     logger.info("Travelioo v7.1 ready")
     yield
 
     # Shutdown
     cleanup_task.cancel()
+    disruption_task.cancel()
     client.close()
     logger.info("Travelioo v7.1 shutdown")
 
@@ -98,6 +113,8 @@ from routes.legal import router as legal_router
 from routes.health import router as health_router
 from routes.test import router as test_router
 from routes.telegram_webhook import router as telegram_router
+from routes.hitl import router as hitl_router
+from routes.disruptions import router as disruption_router
 
 # All routes under /api prefix
 from fastapi import APIRouter
@@ -108,5 +125,7 @@ api_router.include_router(legal_router)
 api_router.include_router(health_router)
 api_router.include_router(test_router)
 api_router.include_router(telegram_router)
+api_router.include_router(hitl_router)
+api_router.include_router(disruption_router)
 
 app.include_router(api_router)

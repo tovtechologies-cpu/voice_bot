@@ -62,15 +62,53 @@ async def handle_message(phone: str, message_text: str, audio_id: str = None, im
     original_text = message_text.strip()
     state = session.get("state", ConversationState.IDLE)
 
-    # Detect language
+    # Detect language (extended: fr, en, wo, fon, yo, ha, sw)
+    detected_lang = None
     if state in [ConversationState.IDLE, ConversationState.NEW]:
         if original_text:
-            lang = detect_language(original_text)
-            await update_session(phone, {"language": lang})
+            detected_lang = detect_language(original_text)
+            await update_session(phone, {"language": detected_lang, "_source_lang": detected_lang})
+            # Update shadow profile language
+            from services.shadow_profile import update_shadow_profile
+            await update_shadow_profile(phone, {"language_pref": detected_lang})
         else:
-            lang = session.get("language", "fr")
+            detected_lang = session.get("language", "fr")
     else:
-        lang = session.get("language", "fr")
+        detected_lang = session.get("language", "fr")
+
+    # Translation pipeline for African languages
+    from services.translation import AFRICAN_LANGUAGES, translate_to_french, LANGUAGE_NAMES
+    source_lang = detected_lang or session.get("_source_lang", "fr")
+
+    if source_lang in AFRICAN_LANGUAGES and original_text:
+        translated, confidence = await translate_to_french(original_text, source_lang)
+        logger.info(f"[MULTILINGUAL] {source_lang} -> FR | conf={confidence:.2f} | {phone}")
+
+        # HITL check: low confidence or high-value context
+        from services.hitl import needs_human_review, trigger_human_review
+        booking_amount = session.get("_pricing", {}).get("total_eur", 0)
+        if needs_human_review(confidence, booking_amount):
+            reason = f"low_confidence ({confidence:.2f})" if confidence < 0.85 else f"high_value ({booking_amount} EUR)"
+            review_id = await trigger_human_review(
+                phone=phone, original_text=original_text, translated_text=translated,
+                source_lang=source_lang, confidence=confidence, reason=reason,
+                context={"state": state, "booking_amount": booking_amount})
+            await update_session(phone, {"_hitl_review_id": review_id, "_hitl_original": original_text})
+            lang_name = LANGUAGE_NAMES.get(source_lang, source_lang)
+            msg = f"Je verifie votre demande en {lang_name}, je reviens vers vous dans 2 minutes."
+            await send_whatsapp_message(phone, msg)
+            # Still process the translated message but log the HITL flag
+            logger.info(f"[HITL] Review triggered: {review_id} — proceeding with best-effort translation")
+
+        # Use translated text for the rest of the flow
+        message_text = translated
+        text = translated.strip().lower()
+        original_text = translated.strip()
+        # Response language stays French for African language users
+        lang = "fr"
+    else:
+        # Direct language (fr or en)
+        lang = detected_lang if detected_lang in ["fr", "en"] else "fr"
 
     # Image -> passport scan
     if image_id and state in [ConversationState.ENROLLING_SCAN, ConversationState.ENROLLING_TP_SCAN]:

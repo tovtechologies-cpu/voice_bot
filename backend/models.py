@@ -52,6 +52,8 @@ class ConversationState:
     SPLIT_COLLECTING_NUMBERS = "split_collecting_numbers"
     SPLIT_CONFIRM = "split_confirm"
     SPLIT_AWAITING_PAYMENTS = "split_awaiting_payments"
+    # HITL (Phase C)
+    AWAITING_HITL_REVIEW = "awaiting_hitl_review"
 
 
 # ---------------------------------------------------------------------------
