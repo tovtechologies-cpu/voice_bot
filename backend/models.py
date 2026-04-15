@@ -45,6 +45,13 @@ class ConversationState:
     CORRECTING_TP_OCR = "correcting_tp_ocr"
     # Data deletion (Phase II)
     CONFIRMING_DELETION = "confirming_deletion"
+    # Payment fast-track (Phase II)
+    PAYMENT_FASTTRACK = "payment_fasttrack"
+    # Split payment (Phase II)
+    SPLIT_PAYER_COUNT = "split_payer_count"
+    SPLIT_COLLECTING_NUMBERS = "split_collecting_numbers"
+    SPLIT_CONFIRM = "split_confirm"
+    SPLIT_AWAITING_PAYMENTS = "split_awaiting_payments"
 
 
 # ---------------------------------------------------------------------------

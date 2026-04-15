@@ -15,13 +15,21 @@ async def simulate_message(payload: dict):
     message = payload.get("message", "")
     audio_id = payload.get("audio_id")
     image_id = payload.get("image_id")
+    channel = payload.get("channel", "whatsapp")
 
     if not message and not audio_id and not image_id:
         return {"error": "No message, audio_id, or image_id provided"}
 
+    from services.channel import set_channel
+    set_channel(phone, channel)
+
+    if channel == "telegram":
+        from services.telegram import register_chat
+        register_chat(phone, payload.get("chat_id", 12345))
+
     await handle_message(phone, message, audio_id=audio_id, image_id=image_id)
     session = await db.sessions.find_one({"phone": phone}, {"_id": 0})
-    return {"status": "processed", "session_state": session.get("state") if session else "unknown", "phone": phone}
+    return {"status": "processed", "session_state": session.get("state") if session else "unknown", "phone": phone, "channel": channel}
 
 
 @router.get("/session/{phone}")

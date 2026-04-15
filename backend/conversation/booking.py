@@ -198,10 +198,58 @@ async def handle_flight_selection(phone: str, text: str, session: Dict, lang: st
 
     # Get country-aware payment menu
     country = session.get("_country_code", "BJ")
-    from payment_drivers.router import get_payment_menu_for_country
+    from payment_drivers.router import get_payment_menu_for_country, get_driver
     menu = get_payment_menu_for_country(country, lang)
+    menu_driver_names = [m["driver_name"] for m in menu]
 
-    # Format payment selection message with fee breakdown
+    # --- Returning user fast-track: check shadow profile for preferred payment ---
+    from services.shadow_profile import get_or_create_shadow_profile
+    shadow = await get_or_create_shadow_profile(phone, channel="whatsapp")
+    preferred_methods = shadow.get("payment_methods", [])
+    fasttrack_driver = None
+    if preferred_methods:
+        # Pick the most recently used method that is available in this country
+        for method in reversed(preferred_methods):
+            if method in menu_driver_names:
+                fasttrack_driver = method
+                break
+
+    if fasttrack_driver:
+        driver_obj = get_driver(fasttrack_driver)
+        driver_label = driver_obj.display_name if driver_obj else fasttrack_driver
+        total_display = format_price_display(pricing["total_eur"], country)
+        fn = passenger.get("firstName", "") if passenger else ""
+
+        if lang == "fr":
+            msg = f"*Bonjour {fn}*\n\n"
+            msg += f"Vol : {selected['origin']} -> {selected['destination']}\n"
+            msg += f"*Total : {total_display}*\n\n"
+            msg += f"Payer avec *{driver_label}* comme la derniere fois ?\n\n"
+            msg += f"*1* Oui, payer avec {driver_label}\n"
+            msg += "*2* Choisir une autre methode"
+        else:
+            msg = f"*Welcome back {fn}*\n\n"
+            msg += f"Flight: {selected['origin']} -> {selected['destination']}\n"
+            msg += f"*Total: {total_display}*\n\n"
+            msg += f"Pay with *{driver_label}* like last time?\n\n"
+            msg += f"*1* Yes, pay with {driver_label}\n"
+            msg += "*2* Choose another method"
+
+        await update_session(phone, {
+            "state": ConversationState.PAYMENT_FASTTRACK,
+            "selected_flight": selected,
+            "booking_id": booking["id"],
+            "booking_ref": booking_ref,
+            "_fare_conditions": {"summary": fare.get("conditions_summary", ""), "raw": fare.get("conditions_raw", ""), "refundable": fare.get("refundable", "NO")},
+            "_payment_menu": menu_driver_names,
+            "_pricing": pricing,
+            "_country_code": country,
+            "_fasttrack_driver": fasttrack_driver,
+        })
+        await send_whatsapp_message(phone, msg)
+        return
+
+    # No preferred method — show full payment menu
     price_display = format_price_display(pricing["total_eur"], country)
     fee_display = format_price_display(pricing["travelioo_fee_eur"], country)
     if lang == "fr":
@@ -216,7 +264,7 @@ async def handle_flight_selection(phone: str, text: str, session: Dict, lang: st
         msg += f"*Total: {price_display}*\n\n"
     for item in menu:
         msg += f"{item['index']} {item['label']}\n"
-    msg += f"\n{'Repondez' if lang == 'fr' else 'Reply'} " + ", ".join(str(m["index"]) for m in menu)
+    msg += f"\n{'Ou tapez' if lang == 'fr' else 'Or type'} *split* {'pour diviser le paiement' if lang == 'fr' else 'to split the payment'}"
 
     await update_session(phone, {
         "state": ConversationState.AWAITING_PAYMENT_METHOD,
@@ -229,6 +277,114 @@ async def handle_flight_selection(phone: str, text: str, session: Dict, lang: st
         "_country_code": country,
     })
     await send_whatsapp_message(phone, msg)
+
+
+async def handle_payment_fasttrack(phone: str, text: str, session: Dict, lang: str):
+    """Handle returning user fast-track payment selection."""
+    fasttrack_driver = session.get("_fasttrack_driver")
+    selected = session.get("selected_flight")
+    booking_ref = session.get("booking_ref")
+    booking_id = session.get("booking_id")
+
+    if not selected or not booking_ref or not fasttrack_driver:
+        await clear_session(phone)
+        msg = "Session expiree. Recommencez." if lang == "fr" else "Session expired. Start again."
+        await send_whatsapp_message(phone, msg)
+        return
+
+    if text in ["1", "oui", "yes", "ok"]:
+        # Accept fast-track — jump directly to payment confirm with pre-selected driver
+        from payment_drivers.router import get_driver
+        from models import format_price_display
+        driver = get_driver(fasttrack_driver)
+        pricing = session.get("_pricing", {})
+        country = session.get("_country_code", "BJ")
+
+        await db.bookings.update_one({"id": booking_id}, {"$set": {"payment_method": fasttrack_driver, "payment_driver": fasttrack_driver}})
+        await update_session(phone, {"selected_payment_method": fasttrack_driver, "_selected_driver": fasttrack_driver, "state": ConversationState.AWAITING_PAYMENT_CONFIRM})
+
+        booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+        passenger_name = booking.get("passenger_name", phone) if booking else phone
+        fare_summary = session.get("_fare_conditions", {}).get("summary", "")
+        op_name = driver.display_name if driver else fasttrack_driver
+        total_eur = pricing.get("total_eur", selected["final_price"])
+        price_display = format_price_display(total_eur, country)
+        gds_display = format_price_display(pricing.get("gds_price_eur", total_eur), country)
+        fee_display = format_price_display(pricing.get("travelioo_fee_eur", 0), country)
+
+        if lang == "fr":
+            msg = f"""*Recapitulatif de votre paiement*
+
+Vol : {selected['origin']} -> {selected['destination']}
+Depart : {selected.get('departure_time', '').split('T')[0]}
+Passager : {passenger_name}
+Classe : {selected['category']}
+Methode : {op_name}
+
+*Conditions du billet :*
+{fare_summary}
+
+Prix vol : {gds_display}
+Frais Travelioo : {fee_display} (non remboursables)
+*Total : {price_display}*
+
+1 Oui, envoyer la notification de paiement
+2 Non, annuler
+3 Voir les conditions completes"""
+        else:
+            msg = f"""*Payment Summary*
+
+Flight: {selected['origin']} -> {selected['destination']}
+Departure: {selected.get('departure_time', '').split('T')[0]}
+Passenger: {passenger_name}
+Class: {selected['category']}
+Method: {op_name}
+
+*Ticket conditions:*
+{fare_summary}
+
+Flight price: {gds_display}
+Travelioo fee: {fee_display} (non-refundable)
+*Total: {price_display}*
+
+1 Yes, send payment notification
+2 No, cancel
+3 View full conditions"""
+        await send_whatsapp_message(phone, msg)
+
+    elif text in ["2", "non", "no", "autre", "other", "choisir"]:
+        # Decline fast-track — show full payment menu
+        country = session.get("_country_code", "BJ")
+        pricing = session.get("_pricing", {})
+        from payment_drivers.router import get_payment_menu_for_country
+        from models import format_price_display
+        menu = get_payment_menu_for_country(country, lang)
+        total_eur = pricing.get("total_eur", selected.get("final_price", 0))
+        price_display = format_price_display(total_eur, country)
+        fee_display = format_price_display(pricing.get("travelioo_fee_eur", 0), country)
+        gds_display = format_price_display(pricing.get("gds_price_eur", total_eur), country)
+
+        if lang == "fr":
+            msg = "*Choisissez votre moyen de paiement*\n"
+            msg += f"Prix vol : {gds_display}\n"
+            msg += f"Frais Travelioo : {fee_display}\n"
+            msg += f"*Total : {price_display}*\n\n"
+        else:
+            msg = "*Choose your payment method*\n"
+            msg += f"Flight price: {gds_display}\n"
+            msg += f"Travelioo fee: {fee_display}\n"
+            msg += f"*Total: {price_display}*\n\n"
+        for item in menu:
+            msg += f"{item['index']} {item['label']}\n"
+
+        await update_session(phone, {
+            "state": ConversationState.AWAITING_PAYMENT_METHOD,
+            "_payment_menu": [m["driver_name"] for m in menu],
+        })
+        await send_whatsapp_message(phone, msg)
+    else:
+        msg = "Repondez *1* (oui) ou *2* (autre methode)" if lang == "fr" else "Reply *1* (yes) or *2* (other method)"
+        await send_whatsapp_message(phone, msg)
 
 
 async def handle_payment_method(phone: str, text: str, session: Dict, lang: str):
@@ -245,6 +401,39 @@ async def handle_payment_method(phone: str, text: str, session: Dict, lang: str)
     payment_menu = session.get("_payment_menu", ["mtn_momo", "moov_money", "stripe"])
     pricing = session.get("_pricing", {})
     country = session.get("_country_code", "BJ")
+
+    # Check for split payment trigger
+    text_lower = text.strip().lower()
+    if text_lower in ["split", "diviser", "partager", "separer"]:
+        from models import format_price_display
+        total = pricing.get("total_eur", 0)
+        # Show only mobile money options for split (card doesn't support split)
+        from payment_drivers.router import get_payment_menu_for_country
+        menu = get_payment_menu_for_country(country, lang)
+        mobile_options = [m for m in menu if m["driver_name"] in ["celtiis_cash", "mtn_momo", "moov_money"]]
+        if not mobile_options:
+            msg = "Le paiement divise n'est disponible qu'avec le mobile money." if lang == "fr" else "Split payment is only available with mobile money."
+            await send_whatsapp_message(phone, msg)
+            return
+        # If only one mobile option, auto-select it
+        if len(mobile_options) == 1:
+            driver_name = mobile_options[0]["driver_name"]
+            await update_session(phone, {"_selected_driver": driver_name, "selected_payment_method": driver_name})
+            await db.bookings.update_one({"id": booking_id}, {"$set": {"payment_method": driver_name, "payment_driver": driver_name}})
+            msg = f"*Paiement divise via {mobile_options[0]['label']}*\n\nCombien de numeros participent ? (2-5)" if lang == "fr" else f"*Split payment via {mobile_options[0]['label']}*\n\nHow many numbers will split? (2-5)"
+            await update_session(phone, {"state": ConversationState.SPLIT_PAYER_COUNT})
+            await send_whatsapp_message(phone, msg)
+            return
+        # Multiple mobile options — let user choose, then go to split flow
+        if lang == "fr":
+            msg = f"*Paiement divise*\nTotal : {format_price_display(total, country)}\n\nChoisissez la methode de paiement :\n"
+        else:
+            msg = f"*Split Payment*\nTotal: {format_price_display(total, country)}\n\nChoose payment method:\n"
+        for m in mobile_options:
+            msg += f"{m['index']} {m['label']}\n"
+        await update_session(phone, {"_split_mode": True})
+        await send_whatsapp_message(phone, msg)
+        return
 
     driver_name = None
     try:
@@ -284,6 +473,21 @@ async def handle_payment_method(phone: str, text: str, session: Dict, lang: str)
     operator = driver_name
 
     await db.bookings.update_one({"id": booking_id}, {"$set": {"payment_method": operator, "payment_driver": driver_name}})
+
+    # Check if split mode was activated
+    if session.get("_split_mode"):
+        await update_session(phone, {
+            "selected_payment_method": operator,
+            "_selected_driver": driver_name,
+            "_split_mode": False,
+            "state": ConversationState.SPLIT_PAYER_COUNT
+        })
+        from models import format_price_display
+        op_name = driver.display_name if driver else driver_name
+        msg = f"*Paiement divise via {op_name}*\n\nCombien de numeros participent ? (2-5)" if lang == "fr" else f"*Split payment via {op_name}*\n\nHow many numbers will split? (2-5)"
+        await send_whatsapp_message(phone, msg)
+        return
+
     await update_session(phone, {"selected_payment_method": operator, "_selected_driver": driver_name, "state": ConversationState.AWAITING_PAYMENT_CONFIRM})
 
     booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})

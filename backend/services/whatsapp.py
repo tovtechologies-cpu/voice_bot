@@ -155,7 +155,12 @@ def chunk_message(message: str, limit: int = WHATSAPP_MSG_LIMIT) -> list:
 # Send text message
 # ---------------------------------------------------------------------------
 async def send_whatsapp_message(to: str, message: str) -> Dict:
-    """Send a WhatsApp text message, auto-chunking if needed."""
+    """Send a text message, auto-routing to Telegram if the user is on that channel."""
+    from services.channel import get_channel
+    if get_channel(to) == "telegram":
+        from services.telegram import send_telegram_message
+        return await send_telegram_message(to, message)
+
     chunks = chunk_message(message)
     last_result = {"status": "simulated"}
 
@@ -227,6 +232,12 @@ async def _send_single_message(to: str, message: str) -> Dict:
 # Send document (PDF ticket)
 # ---------------------------------------------------------------------------
 async def send_whatsapp_document(to: str, document_url: str, filename: str, caption: str = "") -> Dict:
+    """Send a document, auto-routing to Telegram if needed."""
+    from services.channel import get_channel
+    if get_channel(to) == "telegram":
+        from services.telegram import send_telegram_document
+        return await send_telegram_document(to, document_url, filename, caption)
+
     global _last_message_sent_at
 
     if not _is_configured():

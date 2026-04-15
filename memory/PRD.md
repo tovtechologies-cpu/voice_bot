@@ -76,9 +76,14 @@ Travelioo is a WhatsApp-based travel booking chatbot for the African market (pri
 - [x] Old dead payment polling code removed
 - [x] Force-fail test mechanism works with new driver architecture
 
+### Phase B Step 1 — Returning User Fast-Track (Completed 2026-04-15)
+- [x] **Fast-Track Payment**: Returning users with prior payment history get a fast-track option instead of full payment menu
+- [x] Accept (1) skips method selection, Decline (2) shows full menu
+- [x] New state: `PAYMENT_FASTTRACK` in ConversationState
+
 ## Pending / Upcoming
 
-### Phase B (P1)
+### Phase B (P1) — Remaining
 - [ ] **DUAL CHANNEL**: Telegram Bot API support (telegram_handler.py, /telegram/webhook)
 - [ ] **MULTI-NUMBER SPLIT PAYMENT**: Payment split between 2+ numbers with 1,300 XOF reconciliation fee
 

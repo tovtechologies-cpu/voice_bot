@@ -16,7 +16,12 @@ from conversation.enrollment import (
 )
 from conversation.booking import (
     handle_awaiting_destination, handle_awaiting_date, handle_flight_selection,
-    handle_payment_method, handle_pre_debit_confirm, handle_retry
+    handle_payment_method, handle_pre_debit_confirm, handle_retry,
+    handle_payment_fasttrack
+)
+from conversation.split_payment import (
+    handle_split_payer_count, handle_split_collecting_numbers,
+    handle_split_confirm
 )
 from conversation.cancellation import start_cancellation_flow, handle_cancellation_identify, handle_cancellation_confirm, handle_refund_failed
 from conversation.modification import start_modification_flow, handle_modification_requested, handle_modification_confirm
@@ -75,7 +80,9 @@ async def handle_message(phone: str, message_text: str, audio_id: str = None, im
     # Global cancel
     if text in ["annuler", "cancel", "stop", "reset"]:
         cancelable = [
-            ConversationState.AWAITING_PAYMENT_METHOD, "retry",
+            ConversationState.AWAITING_PAYMENT_METHOD, ConversationState.PAYMENT_FASTTRACK,
+            ConversationState.SPLIT_PAYER_COUNT, ConversationState.SPLIT_COLLECTING_NUMBERS,
+            ConversationState.SPLIT_CONFIRM, "retry",
             ConversationState.ENROLLMENT_METHOD, ConversationState.ENROLLING_SCAN,
             ConversationState.ENROLLING_MANUAL_FN, ConversationState.ENROLLING_MANUAL_LN,
             ConversationState.ENROLLING_MANUAL_PP, ConversationState.CONFIRMING_PROFILE,
@@ -242,6 +249,9 @@ async def handle_message(phone: str, message_text: str, audio_id: str = None, im
     if state == ConversationState.AWAITING_FLIGHT_SELECTION:
         await handle_flight_selection(phone, text, session, lang)
         return
+    if state == ConversationState.PAYMENT_FASTTRACK:
+        await handle_payment_fasttrack(phone, text, session, lang)
+        return
     if state == ConversationState.AWAITING_PAYMENT_METHOD:
         await handle_payment_method(phone, text, session, lang)
         return
@@ -250,6 +260,20 @@ async def handle_message(phone: str, message_text: str, audio_id: str = None, im
         return
     if state == "retry":
         await handle_retry(phone, text, session, lang)
+        return
+    # === SPLIT PAYMENT STATES ===
+    if state == ConversationState.SPLIT_PAYER_COUNT:
+        await handle_split_payer_count(phone, text, session, lang)
+        return
+    if state == ConversationState.SPLIT_COLLECTING_NUMBERS:
+        await handle_split_collecting_numbers(phone, text, session, lang)
+        return
+    if state == ConversationState.SPLIT_CONFIRM:
+        await handle_split_confirm(phone, text, session, lang)
+        return
+    if state == ConversationState.SPLIT_AWAITING_PAYMENTS:
+        msg = "Paiements en cours... En attente de tous les payeurs." if lang == "fr" else "Payments in progress... Waiting for all payers."
+        await send_whatsapp_message(phone, msg)
         return
     if state == ConversationState.AWAITING_MOBILE_PAYMENT:
         msg = "Paiement en cours... Approuvez sur votre telephone." if lang == "fr" else "Payment in progress... Approve on your phone."

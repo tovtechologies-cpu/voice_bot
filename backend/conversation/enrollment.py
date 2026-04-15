@@ -19,8 +19,10 @@ async def handle_consent(phone: str, text: str, session: Dict, lang: str):
     if text in ["1", "oui", "yes", "ok", "accepte", "accept", "j'accepte"]:
         # Consent granted — record, create shadow profile, and proceed to enrollment
         from services.shadow_profile import get_or_create_shadow_profile, update_shadow_profile
+        from services.channel import get_channel
+        channel = get_channel(phone)
         await update_session(phone, {"_consent_granted": True, "_consent_at": __import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat()})
-        await get_or_create_shadow_profile(phone, channel="whatsapp")
+        await get_or_create_shadow_profile(phone, channel=channel)
         await update_shadow_profile(phone, {"consent_granted": True, "consent_at": __import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat(), "language_pref": lang})
         await _show_enrollment_menu(phone, lang, is_tp=False)
     elif text in ["2", "non", "no"]:

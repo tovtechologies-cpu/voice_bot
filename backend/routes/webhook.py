@@ -56,6 +56,8 @@ async def _process_message_async(phone: str, text_body: str, audio_id: str, imag
     """Process incoming WhatsApp message asynchronously."""
     try:
         normalized = normalize_phone(phone)
+        from services.channel import set_channel
+        set_channel(normalized, "whatsapp")
         await update_user_message_timestamp(normalized)
         set_last_message_received_at()
         await handle_message(normalized, text_body, audio_id=audio_id, image_id=image_id)

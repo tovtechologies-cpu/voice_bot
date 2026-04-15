@@ -7,7 +7,7 @@ from config import (
     WHATSAPP_PHONE_ID, WHATSAPP_TOKEN, WHATSAPP_WEBHOOK_SECRET,
     WHATSAPP_API_VERSION, WHATSAPP_BUSINESS_PHONE, WHATSAPP_COUNTRY,
     EMERGENT_LLM_KEY, DUFFEL_API_KEY, STRIPE_SECRET_KEY,
-    MOMO_API_USER, MOOV_API_KEY,
+    MOMO_API_USER, MOOV_API_KEY, TELEGRAM_BOT_TOKEN,
     get_duffel_mode, get_momo_mode, get_moov_mode, get_stripe_mode
 )
 
@@ -84,6 +84,7 @@ async def health():
         "services": {
             "mongodb": db_status,
             "whatsapp": wa_status["status"],
+            "telegram": "configured" if (TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_TOKEN != 'your_bot_token_here') else "stub",
             "claude_ai": "configured" if EMERGENT_LLM_KEY else "not_configured",
             "whisper": "configured" if EMERGENT_LLM_KEY else "not_configured",
             "duffel": duffel_mode.lower(),
@@ -130,6 +131,7 @@ async def root():
             "legal_privacy": "/api/legal/privacy",
             "payment": "/api/pay/{booking_id}",
             "verify_qr": "/api/verify_qr/{booking_ref}",
-            "simulate": "/api/test/simulate"
+            "simulate": "/api/test/simulate",
+            "telegram_webhook": "/api/telegram/webhook"
         }
     }

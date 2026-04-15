@@ -97,6 +97,7 @@ from routes.payments import router as payments_router
 from routes.legal import router as legal_router
 from routes.health import router as health_router
 from routes.test import router as test_router
+from routes.telegram_webhook import router as telegram_router
 
 # All routes under /api prefix
 from fastapi import APIRouter
@@ -106,5 +107,6 @@ api_router.include_router(payments_router)
 api_router.include_router(legal_router)
 api_router.include_router(health_router)
 api_router.include_router(test_router)
+api_router.include_router(telegram_router)
 
 app.include_router(api_router)
