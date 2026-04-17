@@ -39,26 +39,27 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"MongoDB connection failed: {e}")
 
-    # Create indexes
-    await db.sessions.create_index("phone", unique=True)
-    await db.passengers.create_index("whatsapp_phone")
-    await db.passengers.create_index("id", unique=True)
-    await db.bookings.create_index("booking_ref")
-    await db.bookings.create_index("phone")
-    await db.rate_limits.create_index("timestamp", expireAfterSeconds=3600)
-    await db.rate_limits.create_index([("phone", 1), ("action", 1)])
-    # Phase II: Shadow Profile indexes
-    await db.shadow_profiles.create_index("phone_number", unique=True)
-    await db.shadow_profiles.create_index("user_id", unique=True)
-    await db.shadow_profiles.create_index("whatsapp_id", sparse=True)
-    await db.shadow_profiles.create_index("telegram_id", sparse=True)
-    # Phase C: HITL indexes
-    await db.hitl_reviews.create_index("review_id", unique=True)
-    await db.hitl_reviews.create_index("status")
-    await db.hitl_reviews.create_index("phone")
-    # Fare alerts indexes
-    await db.fare_cache.create_index("route", unique=True)
-    await db.fare_alerts.create_index([("phone", 1), ("route", 1), ("sent_at", -1)])
+    # Create indexes (non-fatal — app works without them, just slower queries)
+    try:
+        await db.sessions.create_index("phone", unique=True)
+        await db.passengers.create_index("whatsapp_phone")
+        await db.passengers.create_index("id", unique=True)
+        await db.bookings.create_index("booking_ref")
+        await db.bookings.create_index("phone")
+        await db.rate_limits.create_index("timestamp", expireAfterSeconds=3600)
+        await db.rate_limits.create_index([("phone", 1), ("action", 1)])
+        await db.shadow_profiles.create_index("phone_number", unique=True)
+        await db.shadow_profiles.create_index("user_id", unique=True)
+        await db.shadow_profiles.create_index("whatsapp_id", sparse=True)
+        await db.shadow_profiles.create_index("telegram_id", sparse=True)
+        await db.hitl_reviews.create_index("review_id", unique=True)
+        await db.hitl_reviews.create_index("status")
+        await db.hitl_reviews.create_index("phone")
+        await db.fare_cache.create_index("route", unique=True)
+        await db.fare_alerts.create_index([("phone", 1), ("route", 1), ("sent_at", -1)])
+        logger.info("MongoDB indexes created")
+    except Exception as e:
+        logger.warning(f"Index creation skipped (non-fatal): {e}")
 
     # Log environment modes
     from config import get_duffel_mode, get_momo_mode, get_moov_mode, get_stripe_mode, WHATSAPP_WEBHOOK_SECRET, WHATSAPP_PHONE_ID, WHATSAPP_TOKEN, CELTIIS_API_KEY
