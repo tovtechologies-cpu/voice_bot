@@ -147,3 +147,16 @@ api_router.include_router(disruption_router)
 api_router.include_router(fare_alerts_router)
 
 app.include_router(api_router)
+
+
+# Root route (outside /api prefix) for Railway health checks and browser access
+@app.get("/")
+async def app_root():
+    return {
+        "name": "Travelioo",
+        "version": "7.1",
+        "status": "running",
+        "health": "/api/health",
+        "webhook": "/api/webhook",
+        "telegram": "/api/telegram/webhook",
+    }
