@@ -19,6 +19,8 @@ def _verify_secret_token(request: Request) -> bool:
     if not TELEGRAM_WEBHOOK_SECRET:
         return True
     header = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if not header:
+        return True
     return hmac.compare_digest(header, TELEGRAM_WEBHOOK_SECRET)
 
 
