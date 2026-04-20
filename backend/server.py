@@ -160,3 +160,141 @@ async def app_root():
         "webhook": "/api/webhook",
         "telegram": "/api/telegram/webhook",
     }
+
+
+# Static HTML pages (outside /api prefix)
+from fastapi.responses import HTMLResponse
+
+@app.get("/privacy", response_class=HTMLResponse)
+async def privacy_page():
+    return """<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Politique de Confidentialit\u00e9 \u2014 Travelioo</title>
+<style>
+  body { font-family: Arial, sans-serif; max-width: 800px;
+         margin: 40px auto; padding: 20px; color: #333; }
+  h1 { color: #6C63FF; }
+  h2 { color: #0A0F1E; margin-top: 30px; }
+</style>
+</head>
+<body>
+<h1>Politique de Confidentialit\u00e9 \u2014 Travelioo</h1>
+<p><em>Derni\u00e8re mise \u00e0 jour : Avril 2026</em></p>
+
+<h2>1. Collecte des donn\u00e9es</h2>
+<p>Travelioo collecte les informations suivantes
+dans le cadre de la r\u00e9servation de billets d\u2019avion :
+nom, pr\u00e9nom, date de naissance, num\u00e9ro de passeport,
+nationalit\u00e9, num\u00e9ro de t\u00e9l\u00e9phone WhatsApp ou Telegram.</p>
+
+<h2>2. Utilisation des donn\u00e9es</h2>
+<p>Vos donn\u00e9es sont utilis\u00e9es exclusivement pour :
+\u00e9mettre vos billets d\u2019avion, v\u00e9rifier votre identit\u00e9
+aupr\u00e8s des compagnies a\u00e9riennes, vous envoyer votre
+billet et les rappels de vol.</p>
+
+<h2>3. Protection des donn\u00e9es</h2>
+<p>Toutes les donn\u00e9es personnelles sont chiffr\u00e9es
+avec AES-256-GCM. Elles ne sont jamais revendues
+ni partag\u00e9es avec des tiers \u00e0 des fins commerciales.</p>
+
+<h2>4. Conservation des donn\u00e9es</h2>
+<p>Vos donn\u00e9es sont conserv\u00e9es pendant 3 ans
+maximum apr\u00e8s votre derni\u00e8re r\u00e9servation.</p>
+
+<h2>5. Suppression des donn\u00e9es</h2>
+<p>Vous pouvez supprimer votre profil \u00e0 tout moment
+en envoyant le message SUPPRIMER MES DONN\u00c9ES
+sur WhatsApp (+229 01 29 88 83 69) ou Telegram
+(@travelioo_bot).</p>
+
+<h2>6. Paiements</h2>
+<p>Les transactions sont trait\u00e9es par Celtiis Cash,
+MTN MoMo, Moov Money et Stripe. Travelioo ne
+stocke aucune information bancaire.</p>
+
+<h2>7. Contact</h2>
+<p>Pour toute question : bryan@travelioo.com<br>
+WhatsApp : +229 01 97 97 33 46</p>
+</body>
+</html>"""
+
+
+@app.get("/terms", response_class=HTMLResponse)
+async def terms_page():
+    return """<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Conditions G\u00e9n\u00e9rales d\u2019Utilisation \u2014 Travelioo</title>
+<style>
+  body { font-family: Arial, sans-serif; max-width: 800px;
+         margin: 40px auto; padding: 20px; color: #333; }
+  h1 { color: #6C63FF; }
+  h2 { color: #0A0F1E; margin-top: 30px; }
+</style>
+</head>
+<body>
+<h1>Conditions G\u00e9n\u00e9rales d\u2019Utilisation \u2014 Travelioo</h1>
+<p><em>Derni\u00e8re mise \u00e0 jour : Avril 2026</em></p>
+
+<h2>1. Objet</h2>
+<p>Travelioo est un service de r\u00e9servation de billets d\u2019avion
+accessible via WhatsApp et Telegram. Les pr\u00e9sentes conditions
+r\u00e9gissent l\u2019utilisation du service.</p>
+
+<h2>2. Inscription et profil</h2>
+<p>En utilisant Travelioo, vous acceptez de fournir des informations
+exactes (nom, passeport) n\u00e9cessaires \u00e0 l\u2019\u00e9mission de votre billet.
+Vous \u00eates responsable de l\u2019exactitude de ces informations.</p>
+
+<h2>3. R\u00e9servation et paiement</h2>
+<p>Les prix affich\u00e9s incluent le tarif a\u00e9rien et les frais de service
+Travelioo. Le paiement est effectu\u00e9 via Celtiis Cash, MTN MoMo,
+Moov Money ou carte bancaire (Stripe). La r\u00e9servation est confirm\u00e9e
+uniquement apr\u00e8s r\u00e9ception compl\u00e8te du paiement.</p>
+
+<h2>4. Frais de service Travelioo</h2>
+<p>Les frais de service Travelioo sont non remboursables en toute
+circonstance, y compris en cas d\u2019annulation ou de modification
+du billet.</p>
+
+<h2>5. Annulation et remboursement</h2>
+<p>Les conditions d\u2019annulation et de remboursement d\u00e9pendent du
+type de billet achet\u00e9 (Budget, Standard, Flex). Ces conditions
+vous sont communiqu\u00e9es avant la confirmation du paiement.
+Le remboursement porte uniquement sur le tarif a\u00e9rien, d\u00e9duction
+faite des p\u00e9nalit\u00e9s \u00e9ventuelles de la compagnie a\u00e9rienne.</p>
+
+<h2>6. Paiement divis\u00e9</h2>
+<p>Le paiement peut \u00eatre divis\u00e9 entre 2 \u00e0 5 num\u00e9ros. Des frais de
+r\u00e9conciliation de 2\u20ac (1 300 XOF) par payeur suppl\u00e9mentaire
+s\u2019appliquent. Si un payeur ne confirme pas dans le d\u00e9lai imparti,
+tous les paiements re\u00e7us sont automatiquement rembours\u00e9s.</p>
+
+<h2>7. Perturbations de vol</h2>
+<p>En cas d\u2019annulation par la compagnie a\u00e9rienne, Travelioo
+d\u00e9clenche automatiquement le remboursement du tarif a\u00e9rien.
+En cas de retard sup\u00e9rieur \u00e0 2 heures, une option de
+relogement sur un autre vol vous est propos\u00e9e.</p>
+
+<h2>8. Limitation de responsabilit\u00e9</h2>
+<p>Travelioo agit en qualit\u00e9 d\u2019interm\u00e9diaire entre vous et les
+compagnies a\u00e9riennes. Travelioo n\u2019est pas responsable des
+retards, annulations ou modifications d\u00e9cid\u00e9es par les
+compagnies a\u00e9riennes.</p>
+
+<h2>9. Donn\u00e9es personnelles</h2>
+<p>Voir notre <a href="/privacy">Politique de Confidentialit\u00e9</a>
+pour les d\u00e9tails sur la collecte et le traitement de vos
+donn\u00e9es personnelles.</p>
+
+<h2>10. Contact</h2>
+<p>Pour toute r\u00e9clamation : bryan@travelioo.com<br>
+WhatsApp : +229 01 97 97 33 46</p>
+</body>
+</html>"""
