@@ -23,17 +23,22 @@ def get_last_verified_at():
 
 
 def verify_whatsapp_signature(payload_body: bytes, signature_header: str, secret: str) -> bool:
-    """Verify X-Hub-Signature-256 from WhatsApp Cloud API."""
+    """Verify X-Hub-Signature-256 from WhatsApp Cloud API.
+    The secret is the Meta App Secret (from App Settings > Basic)."""
     if not secret:
         return True
     if not signature_header:
+        logger.warning("[WEBHOOK] No signature header present")
         return False
     expected = 'sha256=' + hmac.new(
         secret.encode('utf-8'),
         payload_body,
         hashlib.sha256
     ).hexdigest()
-    return hmac.compare_digest(expected, signature_header)
+    match = hmac.compare_digest(expected, signature_header)
+    if not match:
+        logger.warning(f"[WEBHOOK] Signature mismatch | received={signature_header[:30]}... | expected={expected[:30]}...")
+    return match
 
 
 @router.get("/webhook")
@@ -43,12 +48,12 @@ async def verify_webhook(
     hub_challenge: str = Query(None, alias="hub.challenge")
 ):
     """Webhook verification — Meta sends GET to verify endpoint ownership."""
-    # Accept either WHATSAPP_WEBHOOK_SECRET or WHATSAPP_VERIFY_TOKEN
     valid_tokens = [t for t in [WHATSAPP_WEBHOOK_SECRET, WHATSAPP_VERIFY_TOKEN] if t]
-    if hub_mode == "subscribe" and hub_token in valid_tokens:
+    logger.info(f"[WEBHOOK] Verify request: mode={hub_mode}, token={hub_token[:10] if hub_token else 'none'}..., valid_count={len(valid_tokens)}")
+    if hub_mode == "subscribe" and hub_token and hub_token in valid_tokens:
         logger.info("[WEBHOOK] Verification successful")
         return Response(content=hub_challenge, media_type="text/plain")
-    logger.warning(f"[WEBHOOK] Verification failed — token mismatch")
+    logger.warning(f"[WEBHOOK] Verification failed — received token does not match any configured token")
     return {"error": "Verification failed"}
 
 
@@ -77,7 +82,7 @@ async def receive_webhook(request: Request, background_tasks: BackgroundTasks):
         if not verify_whatsapp_signature(payload_body, signature_header, WHATSAPP_WEBHOOK_SECRET):
             client_ip = request.client.host if request.client else "unknown"
             masked_ip = client_ip[:client_ip.rfind(".")] + ".***" if "." in client_ip else client_ip
-            logger.warning(f"[WEBHOOK] Signature FAILED | ip={masked_ip} | ts={datetime.now(timezone.utc).isoformat()}")
+            logger.warning(f"[WEBHOOK] Signature FAILED | ip={masked_ip} | sig_present={bool(signature_header)} | secret_len={len(WHATSAPP_WEBHOOK_SECRET)} | payload_len={len(payload_body)}")
             return Response(content='{"error":"signature_verification_failed"}', status_code=403, media_type="application/json")
         _last_verified_at = datetime.now(timezone.utc).isoformat()
         logger.debug("[WEBHOOK] Signature verified")
