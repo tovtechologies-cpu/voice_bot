@@ -15,8 +15,8 @@ from services.ticket import generate_ticket_pdf
 from services.security import check_rate_limit, check_payment_velocity
 from utils.helpers import generate_booking_ref, mask_phone, format_timestamp_gmt1
 from utils.formatting import (
-    format_flight_options_message,
-    format_card_payment_link, format_payment_success, format_payment_failed,
+    format_flight_options_message, format_payment_menu, format_payment_confirm,
+    format_payment_success, format_payment_failed,
     format_retry_options, format_booking_confirmed
 )
 from config import APP_BASE_URL
@@ -121,9 +121,13 @@ async def search_and_show_flights(phone: str, intent: Dict, lang: str):
         await send_whatsapp_message(phone, msg)
         return
 
+    # Get session for country code
+    session = await db.sessions.find_one({"phone": phone}, {"_id": 0})
+    country = session.get("_country_code", "BJ") if session else "BJ"
+
     flights_with_cat = list(categorized.values())
     await update_session(phone, {"state": ConversationState.AWAITING_FLIGHT_SELECTION, "intent": intent, "flights": flights_with_cat})
-    await send_whatsapp_message(phone, format_flight_options_message(categorized, origin, destination, date))
+    await send_whatsapp_message(phone, format_flight_options_message(categorized, origin, destination, date, lang=lang, country=country))
 
 
 async def handle_flight_selection(phone: str, text: str, session: Dict, lang: str):
@@ -633,7 +637,8 @@ You have *30 seconds*..."""
         # Card payment (Stripe)
         payment_url = result.raw.get("client_secret", "")
         if payment_url:
-            await send_whatsapp_message(phone, format_card_payment_link(payment_url, lang))
+            msg = f"Finalisez votre paiement ici :\n{payment_url}\n\n_Lien valable 15 minutes._" if lang == "fr" else f"Complete your payment here:\n{payment_url}\n\n_Link valid for 15 minutes._"
+            await send_whatsapp_message(phone, msg)
         else:
             if lang == "fr":
                 msg = f"Paiement en cours de traitement. Reference: {result.reference}"
@@ -780,7 +785,7 @@ async def complete_card_payment(booking_id: str, stripe_intent_id: str):
     if session:
         lang = session.get("language", "fr")
     await db.bookings.update_one({"id": booking["id"]}, {"$set": {"status": "confirmed"}})
-    await send_whatsapp_message(phone, format_payment_success(lang))
+    await send_whatsapp_message(phone, format_payment_success(booking, booking.get("payment_driver", "stripe"), lang))
     ticket_filename = generate_ticket_pdf(booking)
     await asyncio.sleep(2)
     await send_whatsapp_document(phone, f"{APP_BASE_URL}/api/tickets/{ticket_filename}", ticket_filename, format_booking_confirmed(booking, lang))

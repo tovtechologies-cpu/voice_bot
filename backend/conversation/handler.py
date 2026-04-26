@@ -9,7 +9,7 @@ from services.ai import detect_language
 from services.security import check_rate_limit, sanitize_input
 from conversation.enrollment import (
     handle_enrollment_method_selection, handle_manual_first_name, handle_manual_last_name,
-    handle_manual_passport, handle_profile_confirmation, handle_passport_scan,
+    handle_manual_passport, handle_manual_nationality, handle_profile_confirmation, handle_passport_scan,
     handle_travel_purpose, handle_third_party_selection, handle_save_tp_prompt,
     handle_passenger_count, handle_passenger_count_prompt, handle_consent,
     handle_ocr_correction
@@ -201,6 +201,9 @@ async def handle_message(phone: str, message_text: str, audio_id: str = None, im
     if state == ConversationState.ENROLLING_MANUAL_PP:
         await handle_manual_passport(phone, original_text, session, lang, is_tp=False)
         return
+    if state == ConversationState.ENROLLING_MANUAL_NAT:
+        await handle_manual_nationality(phone, original_text, session, lang, is_tp=False)
+        return
     if state == ConversationState.CONFIRMING_PROFILE:
         await handle_profile_confirmation(phone, text, session, lang, is_tp=False)
         return
@@ -230,6 +233,9 @@ async def handle_message(phone: str, message_text: str, audio_id: str = None, im
         return
     if state == ConversationState.ENROLLING_TP_MANUAL_PP:
         await handle_manual_passport(phone, original_text, session, lang, is_tp=True)
+        return
+    if state == ConversationState.ENROLLING_TP_MANUAL_NAT:
+        await handle_manual_nationality(phone, original_text, session, lang, is_tp=True)
         return
     if state == ConversationState.CONFIRMING_TP_PROFILE:
         await handle_profile_confirmation(phone, text, session, lang, is_tp=True)

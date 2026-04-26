@@ -16,6 +16,9 @@ def title_case_name(name: str) -> str:
 
 
 async def download_whatsapp_image(image_id: str) -> Optional[bytes]:
+    """Download image from WhatsApp or Telegram."""
+    if image_id.startswith("tg:"):
+        return await _download_telegram_image(image_id[3:])
     if not WHATSAPP_TOKEN or WHATSAPP_TOKEN == 'your_token_here':
         logger.warning("WhatsApp not configured - cannot download image")
         return None
@@ -32,6 +35,27 @@ async def download_whatsapp_image(image_id: str) -> Optional[bytes]:
                 return img_resp.content
     except Exception as e:
         logger.error(f"WhatsApp image download error: {e}")
+    return None
+
+
+async def _download_telegram_image(file_id: str) -> Optional[bytes]:
+    """Download image from Telegram Bot API."""
+    from config import TELEGRAM_BOT_TOKEN
+    if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == 'your_bot_token_here':
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile", params={"file_id": file_id})
+            if resp.status_code != 200:
+                return None
+            file_path = resp.json().get("result", {}).get("file_path")
+            if not file_path:
+                return None
+            dl = await client.get(f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}")
+            if dl.status_code == 200:
+                return dl.content
+    except Exception as e:
+        logger.error(f"Telegram image download error: {e}")
     return None
 
 

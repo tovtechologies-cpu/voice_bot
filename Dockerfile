@@ -2,9 +2,9 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# System dependencies for Pillow, cryptography, etc.
+# System dependencies: ffmpeg for audio conversion, image libs for Pillow
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc libffi-dev libssl-dev libjpeg-dev zlib1g-dev \
+    gcc libffi-dev libssl-dev libjpeg-dev zlib1g-dev ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for Docker layer caching

@@ -104,6 +104,22 @@ async def lifespan(app: FastAPI):
                 logger.error(f"Fare alert monitor error: {e}")
             await asyncio.sleep(86400)  # Every 24 hours
     fare_task = asyncio.create_task(periodic_fare_check())
+    # Set Telegram bot description (non-blocking)
+    async def set_telegram_branding():
+        from config import TELEGRAM_BOT_TOKEN
+        if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == 'your_bot_token_here':
+            return
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                await client.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setMyDescription",
+                    json={"description": "Speak'n Go. Reservez votre vol par vocal. Partenaire exclusif Celtiis Cash"})
+                await client.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setMyShortDescription",
+                    json={"short_description": "Agent de voyage IA | Partenaire Celtiis Cash"})
+                logger.info("[Telegram] Bot branding set")
+        except Exception as e:
+            logger.warning(f"[Telegram] Branding failed: {e}")
+    asyncio.create_task(set_telegram_branding())
     logger.info("Travelioo v7.1 ready")
     yield
 
@@ -132,6 +148,7 @@ from routes.telegram_webhook import router as telegram_router
 from routes.hitl import router as hitl_router
 from routes.disruptions import router as disruption_router
 from routes.fare_alerts import router as fare_alerts_router
+from routes.demo_check import router as demo_check_router
 
 # All routes under /api prefix
 from fastapi import APIRouter
@@ -145,6 +162,7 @@ api_router.include_router(telegram_router)
 api_router.include_router(hitl_router)
 api_router.include_router(disruption_router)
 api_router.include_router(fare_alerts_router)
+api_router.include_router(demo_check_router)
 
 app.include_router(api_router)
 

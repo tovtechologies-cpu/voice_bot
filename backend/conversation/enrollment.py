@@ -75,11 +75,9 @@ async def _show_enrollment_menu(phone: str, lang: str, is_tp: bool = False):
 async def handle_enrollment_method_selection(phone: str, text: str, session: Dict, lang: str, is_tp: bool = False):
     if text in ["1", "2"]:
         if lang == "fr":
-            msg = """Envoyez une photo de votre passeport.
-Assurez-vous que la photo est nette et que les deux lignes du bas sont visibles (zone MRZ)."""
+            msg = "Envoyez une photo claire de la page principale de votre passeport (page avec votre photo).\n\nAssurez-vous que les deux lignes du bas (zone MRZ) sont bien visibles."
         else:
-            msg = """Send a photo of your passport.
-Make sure the photo is clear and the two bottom lines are visible (MRZ zone)."""
+            msg = "Send a clear photo of the main page of your passport (the page with your photo).\n\nMake sure the two bottom lines (MRZ zone) are visible."
         scan_state = ConversationState.ENROLLING_TP_SCAN if is_tp else ConversationState.ENROLLING_SCAN
         await update_session(phone, {"state": scan_state})
         await send_whatsapp_message(phone, msg)
@@ -139,6 +137,27 @@ async def handle_manual_passport(phone: str, text: str, session: Dict, lang: str
             await send_whatsapp_message(phone, msg)
             return
         enrollment["passportNumber"] = clean
+    # If nationality already captured (e.g., from OCR), skip to confirm
+    if enrollment.get("nationality"):
+        confirm_state = ConversationState.CONFIRMING_TP_PROFILE if is_tp else ConversationState.CONFIRMING_PROFILE
+        await update_session(phone, {"state": confirm_state, "enrollment_data": enrollment})
+        await send_profile_confirmation(phone, enrollment, lang)
+    else:
+        nat_state = ConversationState.ENROLLING_TP_MANUAL_NAT if is_tp else ConversationState.ENROLLING_MANUAL_NAT
+        await update_session(phone, {"state": nat_state, "enrollment_data": enrollment})
+        msg = "Quelle est votre nationalite ?\nEx : Beninoise, Francaise, Nigeriane..." if lang == "fr" else "What is your nationality?\nEx: Beninese, French, Nigerian..."
+        await send_whatsapp_message(phone, msg)
+
+
+async def handle_manual_nationality(phone: str, text: str, session: Dict, lang: str, is_tp: bool):
+    """Handle nationality input during enrollment."""
+    nat = text.strip().title()
+    if len(nat) < 2:
+        msg = "Nationalite invalide. Reessayez." if lang == "fr" else "Invalid nationality. Try again."
+        await send_whatsapp_message(phone, msg)
+        return
+    enrollment = session.get("enrollment_data", {})
+    enrollment["nationality"] = nat
     confirm_state = ConversationState.CONFIRMING_TP_PROFILE if is_tp else ConversationState.CONFIRMING_PROFILE
     await update_session(phone, {"state": confirm_state, "enrollment_data": enrollment})
     await send_profile_confirmation(phone, enrollment, lang)
