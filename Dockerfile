@@ -2,14 +2,16 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# System dependencies: ffmpeg for audio conversion, image libs for Pillow
+# System dependencies: ffmpeg for audio, image libs for Pillow/OCR
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc libffi-dev libssl-dev libjpeg-dev zlib1g-dev ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for Docker layer caching
+# Copy and install Python dependencies
 COPY backend/requirements.txt .
-RUN pip install --no-cache-dir --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/ -r requirements.txt
+RUN pip install --no-cache-dir \
+    --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/ \
+    -r requirements.txt
 
 # Copy application code
 COPY backend/ .
