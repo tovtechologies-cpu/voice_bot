@@ -52,7 +52,10 @@ async def handle_message(phone: str, message_text: str, audio_id: str = None, im
             logger.info(f"Voice transcription for {phone}: '{transcribed[:80]}'")
         else:
             lang = session.get("language", "fr")
-            msg = "Je n'ai pas pu transcrire votre message vocal. Pouvez-vous l'ecrire ?" if lang == "fr" else "I couldn't transcribe your voice message. Could you type it instead?"
+            if lang == "fr":
+                msg = "Je n'ai pas pu comprendre votre audio.\n\nPouvez-vous :\n*1* Reessayer avec un message vocal plus clair\n*2* Ou taper votre destination par ecrit\n\n_Exemple : Paris vendredi retour lundi_"
+            else:
+                msg = "I couldn't understand your audio.\n\nYou can:\n*1* Try again with a clearer voice message\n*2* Or type your destination\n\n_Example: Paris Friday return Monday_"
             await send_whatsapp_message(phone, msg)
             return
 

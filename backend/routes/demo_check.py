@@ -1,4 +1,5 @@
 """Demo readiness check endpoint."""
+import os
 import logging
 import subprocess
 import httpx
@@ -18,8 +19,9 @@ async def demo_check():
     """Check readiness of all systems for demo."""
     results = {}
 
-    # Whisper (Emergent cloud)
-    results["whisper"] = "ok" if EMERGENT_LLM_KEY else "error"
+    # Whisper (needs OPENAI_API_KEY or EMERGENT_LLM_KEY)
+    whisper_key = os.environ.get("OPENAI_API_KEY") or EMERGENT_LLM_KEY
+    results["whisper"] = "ok" if whisper_key else "error"
     results["whisper_version"] = "whisper-1 (cloud)"
 
     # ffmpeg
@@ -67,7 +69,7 @@ async def demo_check():
     results["duffel"] = get_duffel_mode().lower()
 
     # Claude AI
-    results["claude"] = "ok" if EMERGENT_LLM_KEY else "error"
+    results["claude"] = "ok" if (EMERGENT_LLM_KEY or os.environ.get("OPENAI_API_KEY")) else "error"
 
     # MongoDB
     try:

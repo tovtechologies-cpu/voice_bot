@@ -45,19 +45,27 @@ async def handle_awaiting_destination(phone: str, original_text: str, session: D
         if dest_code:
             intent["destination"] = dest_code
         else:
-            # Suggest alternatives
-            suggestions = suggest_airports(original_text, limit=3)
-            if suggestions:
+            # Only suggest if input is at least 3 chars and has close matches (score >= 65)
+            if len(original_text.strip()) >= 3:
+                suggestions = suggest_airports(original_text, limit=3)
+                close_matches = [s for s in suggestions if s["score"] >= 65]
+            else:
+                close_matches = []
+
+            if close_matches:
                 if lang == "fr":
                     msg = "Je n'ai pas reconnu cette ville. Vouliez-vous dire :\n"
-                    for i, s in enumerate(suggestions, 1):
-                        msg += f"{i} {s['city'].title()} ({s['code']})\n"
+                    for i, s in enumerate(close_matches, 1):
+                        msg += f"*{i}* {s['city'].title()} ({s['code']})\n"
                 else:
                     msg = "I didn't recognize that city. Did you mean:\n"
-                    for i, s in enumerate(suggestions, 1):
-                        msg += f"{i} {s['city'].title()} ({s['code']})\n"
+                    for i, s in enumerate(close_matches, 1):
+                        msg += f"*{i}* {s['city'].title()} ({s['code']})\n"
             else:
-                msg = "Je n'ai pas reconnu cette ville. Essayez: Paris, Dakar, Lagos..." if lang == "fr" else "I didn't recognize that city. Try: Paris, Dakar, Lagos..."
+                if lang == "fr":
+                    msg = "Je n'ai pas reconnu cette destination.\n\nPouvez-vous preciser ?\n_Exemples : Paris, Dakar, Abidjan, Dubai, Lagos, Casablanca, Bruxelles_\n\nOu tapez *annuler* pour recommencer."
+                else:
+                    msg = "I didn't recognize that destination.\n\nCan you be more specific?\n_Examples: Paris, Dakar, Abidjan, Dubai, Lagos, Casablanca, Brussels_\n\nOr type *cancel* to start over."
             await send_whatsapp_message(phone, msg)
             return
 
