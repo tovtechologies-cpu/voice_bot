@@ -131,14 +131,18 @@ Travelioo is a WhatsApp-based travel booking chatbot for the African market (pri
 ## All Phases Complete
 
 ### Predictive Fare Alerts (Completed 2026-04-15)
-- [x] **Route Analysis**: Detects recurring routes from shadow profile travel_history (2+ bookings)
-- [x] **Fare Monitoring**: Checks Duffel fares with 24h cache
-- [x] **Alert Threshold**: Triggers when fare drops > 10% below user's historical average
-- [x] **Rate Limiting**: Max 1 alert per route per week
-- [x] **Multi-channel**: Sends on WhatsApp + Telegram if both linked
-- [x] **History**: Stored in fare_alerts collection + shadow profile fare_alert_history
-- [x] **Background Task**: Runs every 24h for all users with 2+ trips
-- [x] API: GET /api/fare-alerts/routes/{phone}, POST /api/fare-alerts/check/{phone}, GET /api/fare-alerts/fare/{origin}/{dest}
+- [x] Route analysis, 24h fare cache, >10% drop alerts, 1/week rate limit, multi-channel
+
+### Demo Readiness Sprint (Completed 2026-04-26)
+- [x] **Whisper Audio**: Fixed OGG→MP3 pipeline via pydub+ffmpeg, Emergent cloud Whisper API, Telegram audio support
+- [x] **Nationality Field**: Added enrolling_manual_nat state, required before flight search, extracted from MRZ in OCR
+- [x] **OCR Passport Scan**: Enhanced with Telegram image support (tg: prefix), MRZ nationality extraction
+- [x] **Visual Message Redesign**: Premium formatting with separators, dual currency, recommended badges
+- [x] **PDF Ticket**: Travelioo branded boarding pass (#0A0F1E + #6C63FF), QR code, landscape layout
+- [x] **Voice Responses**: gTTS text-to-speech, MP3 generation, WhatsApp audio + Telegram voice send
+- [x] **Demo-Check Endpoint**: GET /api/demo-check — validates all 7 systems
+- [x] **Telegram Branding**: Bot description + short description set on startup
+- [x] **Domain**: Flagged for manual travelioo.tech DNS config
 
 ## Deployment
 See `/app/DEPLOYMENT_CHECKLIST.md` for all required environment variables.
