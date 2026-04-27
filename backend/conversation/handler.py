@@ -52,11 +52,9 @@ async def handle_message(phone: str, message_text: str, audio_id: str = None, im
             message_text = transcribed
             logger.info(f"Voice transcription for {phone}: '{transcribed[:80]}'")
         else:
-            lang = session.get("language", "fr")
-            if lang == "fr":
-                msg = "Je n'ai pas pu comprendre votre audio.\n\nPouvez-vous :\n*1* Reessayer avec un message vocal plus clair\n*2* Ou taper votre destination par ecrit\n\n_Exemple : Paris vendredi retour lundi_"
-            else:
-                msg = "I couldn't understand your audio.\n\nYou can:\n*1* Try again with a clearer voice message\n*2* Or type your destination\n\n_Example: Paris Friday return Monday_"
+            from services.i18n import t as _t, detect_lang_from_phone as _dlp
+            lang_for_audio = session.get("language") or _dlp(phone)
+            msg = _t("audio_failed", lang_for_audio)
             await send_whatsapp_message(phone, msg)
             return
 
@@ -66,23 +64,52 @@ async def handle_message(phone: str, message_text: str, audio_id: str = None, im
     original_text = message_text.strip()
     state = session.get("state", ConversationState.IDLE)
 
-    # Detect language (extended: fr, en, wo, fon, yo, ha, sw)
-    detected_lang = None
-    if state in [ConversationState.IDLE, ConversationState.NEW]:
+    # ── LANGUAGE DETECTION ──
+    # Priority: 1) saved session lang, 2) text detection, 3) phone country code
+    from services.i18n import detect_lang_from_phone, SUPPORTED_LANGS, t
+    detected_lang = session.get("language")
+
+    if not detected_lang or state in [ConversationState.IDLE, ConversationState.NEW]:
         if original_text:
-            detected_lang = detect_language(original_text)
-            await update_session(phone, {"language": detected_lang, "_source_lang": detected_lang})
-            # Update shadow profile language
-            from services.shadow_profile import update_shadow_profile
-            await update_shadow_profile(phone, {"language_pref": detected_lang})
+            text_detected = detect_language(original_text)
+            # Map African langs → fr for response, keep for translation
+            if text_detected in SUPPORTED_LANGS:
+                detected_lang = text_detected
+            elif text_detected in ["wo", "fon", "yo", "ha", "sw"]:
+                detected_lang = "fr"  # Respond in French for African langs
+            else:
+                # Fallback to phone country code
+                detected_lang = detect_lang_from_phone(phone)
         else:
-            detected_lang = session.get("language", "fr")
-    else:
-        detected_lang = session.get("language", "fr")
+            detected_lang = detect_lang_from_phone(phone)
+        await update_session(phone, {"language": detected_lang, "_source_lang": detect_language(original_text) if original_text else detected_lang})
+        from services.shadow_profile import update_shadow_profile
+        await update_shadow_profile(phone, {"language_pref": detected_lang})
+
+    # ── LANGUAGE CHANGE COMMAND ──
+    if text in ["langue", "language", "idioma", "لغة", "cambiar idioma", "change language", "/langue", "/language"]:
+        msg = t("change_language", detected_lang)
+        await update_session(phone, {"state": "changing_language"})
+        await send_whatsapp_message(phone, msg)
+        return
+
+    if state == "changing_language":
+        lang_map = {"1": "fr", "2": "en", "3": "es", "4": "ar", "5": "pt"}
+        if text in lang_map:
+            new_lang = lang_map[text]
+            await update_session(phone, {"language": new_lang, "state": ConversationState.IDLE})
+            from services.shadow_profile import update_shadow_profile as _up
+            await _up(phone, {"language_pref": new_lang})
+            msg = t("language_changed", new_lang)
+            await send_whatsapp_message(phone, msg)
+            return
+        msg = t("change_language", detected_lang)
+        await send_whatsapp_message(phone, msg)
+        return
 
     # Translation pipeline for African languages
     from services.translation import AFRICAN_LANGUAGES, translate_to_french, LANGUAGE_NAMES
-    source_lang = detected_lang or session.get("_source_lang", "fr")
+    source_lang = session.get("_source_lang") or detected_lang or "fr"
 
     if source_lang in AFRICAN_LANGUAGES and original_text:
         translated, confidence = await translate_to_french(original_text, source_lang)
@@ -361,10 +388,8 @@ async def handle_message(phone: str, message_text: str, audio_id: str = None, im
         return
 
     # Fallback — NEVER stay silent
-    if lang == "fr":
-        msg = "Desole, je n'ai pas compris votre choix.\n\nVeuillez selectionner une option valide ou tapez *annuler* pour recommencer."
-    else:
-        msg = "Sorry, I didn't understand your choice.\n\nPlease select a valid option or type *cancel* to start over."
+    from services.i18n import t as _t
+    msg = _t("fallback_error", lang)
     await send_whatsapp_message(phone, msg)
 
 
@@ -378,56 +403,16 @@ async def start_conversation(phone: str, lang: str):
 
 
 async def handle_new_user(phone: str, lang: str):
-    if lang == "fr":
-        msg = """Bienvenue sur Travelioo !
-
-Avant de continuer, nous avons besoin de votre accord :
-
-- Utiliser votre nom pour emettre votre billet
-- Stocker votre profil pour vos prochaines reservations (supprimable a tout moment)
-- Traiter votre paiement de facon securisee
-
-Vos donnees sont chiffrees (AES-256) et vous pouvez demander leur suppression a tout moment.
-
-Politique de confidentialite : /api/legal/privacy
-Conditions : /api/legal/terms
-
-*1* J'accepte, continuer
-*2* Non merci"""
-    else:
-        msg = """Welcome to Travelioo!
-
-Before we continue, we need your agreement to:
-
-- Use your name to issue your ticket
-- Store your profile for future bookings (deletable anytime)
-- Process your payment securely
-
-Your data is encrypted (AES-256) and you can request deletion at any time.
-
-Privacy policy: /api/legal/privacy
-Terms: /api/legal/terms
-
-*1* I agree, continue
-*2* No thanks"""
+    from services.i18n import t
+    msg = t("welcome_consent", lang)
     await update_session(phone, {"state": ConversationState.AWAITING_CONSENT, "enrolling_for": "self"})
     await send_whatsapp_message(phone, msg)
 
 
 async def handle_returning_user(phone: str, passenger: Dict, lang: str):
+    from services.i18n import t
     fn = passenger.get("firstName", "")
     ln = passenger.get("lastName", "")
-    if lang == "fr":
-        msg = f"""Rebonjour {fn} !
-Reservez-vous ce vol pour vous-meme ou pour quelqu'un d'autre ?
-
-1 Pour moi ({fn} {ln})
-2 Pour un tiers"""
-    else:
-        msg = f"""Welcome back {fn}!
-Are you booking this flight for yourself or someone else?
-
-1 For me ({fn} {ln})
-2 For someone else"""
+    msg = t("returning_user", lang, name=fn, fullname=f"{fn} {ln}")
     await update_session(phone, {"state": ConversationState.ASKING_TRAVEL_PURPOSE})
     await send_whatsapp_message(phone, msg)

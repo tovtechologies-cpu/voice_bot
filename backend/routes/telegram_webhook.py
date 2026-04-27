@@ -104,12 +104,20 @@ async def _handle_command(phone: str, command: str, lang: str = "fr") -> bool:
             "/annuler — Annuler en cours\n"
             "/historique — Mes reservations\n"
             "/profil — Mon profil\n"
+            "/langue — Changer de langue\n"
             "/alerte — Alertes prix\n"
             "/aide — Cette aide\n\n"
             "Envoyez un vocal ou ecrit :\n"
             "_Paris vendredi retour lundi_\n\n"
             "Speak'n Go"
         )
+        await send_telegram_message(phone, msg)
+        return True
+
+    if cmd == "/langue" or cmd == "/language":
+        from services.i18n import t
+        msg = t("change_language", "fr")
+        await db.sessions.update_one({"phone": phone}, {"$set": {"state": "changing_language"}}, upsert=True)
         await send_telegram_message(phone, msg)
         return True
 

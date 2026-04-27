@@ -103,6 +103,15 @@ def detect_language_extended(text: str) -> str:
     # English markers
     english_words = ["i", "want", "to", "go", "the", "a", "please", "hello", "yes", "no",
                      "flight", "ticket", "book", "travel", "departure"]
+    # Spanish markers
+    spanish_words = ["hola", "quiero", "vuelo", "para", "el", "la", "por", "favor", "si",
+                     "gracias", "buscar", "reservar", "destino", "ida", "vuelta", "billete"]
+    # Arabic markers (transliterated common words)
+    arabic_words = ["مرحبا", "اريد", "رحلة", "طيران", "حجز", "شكرا", "نعم", "لا",
+                    "اهلا", "سفر", "تذكرة", "موعد", "غدا"]
+    # Portuguese markers
+    portuguese_words = ["ola", "quero", "voo", "para", "por", "obrigado", "sim", "nao",
+                        "reservar", "destino", "passagem", "viagem", "partida"]
 
     def score(words):
         return sum(1 for w in words if f" {w} " in f" {text_lower} " or text_lower == w or text_lower.startswith(w + " "))
@@ -115,6 +124,9 @@ def detect_language_extended(text: str) -> str:
         "sw": score(swahili_words),
         "fr": score(french_words),
         "en": score(english_words),
+        "es": score(spanish_words),
+        "ar": score(arabic_words),
+        "pt": score(portuguese_words),
     }
 
     best = max(scores, key=scores.get)
