@@ -46,34 +46,32 @@ def _minutes_to_iso(minutes: int) -> str:
     return f"PT{h}H{m}M"
 
 
-async def search_flights(origin: str, destination: str, departure_date: str, adults: int = 1) -> List[Dict]:
+async def search_flights(origin: str, destination: str, departure_date: str, adults: int = 1, return_date: str = None) -> List[Dict]:
     """Search flights via Duffel API, falling back to mock in sandbox/mock mode."""
     mode = get_duffel_mode()
+    is_roundtrip = bool(return_date)
+    label = f"{origin}->{destination}" + (f" RT {return_date}" if is_roundtrip else "")
     if mode == "MOCK":
-        logger.info(f"[Duffel MOCK] No key configured. Mock search: {origin}->{destination} on {departure_date}")
-        return generate_mock_flights(origin, destination, departure_date, adults)
-    if mode == "SANDBOX":
-        logger.info(f"[Duffel SANDBOX] Test search: {origin}->{destination} on {departure_date}")
-        return await _search_duffel_flights(origin, destination, departure_date, adults)
-    # PRODUCTION
-    logger.info(f"[Duffel PRODUCTION] Live search: {origin}->{destination} on {departure_date}")
-    return await _search_duffel_flights(origin, destination, departure_date, adults)
+        logger.info(f"[Duffel MOCK] Mock search: {label}")
+        return generate_mock_flights(origin, destination, departure_date, adults, return_date)
+    logger.info(f"[Duffel {mode}] Search: {label}")
+    return await _search_duffel_flights(origin, destination, departure_date, adults, return_date)
 
 
-async def _search_duffel_flights(origin: str, destination: str, departure_date: str, adults: int) -> List[Dict]:
-    """Real Duffel API search."""
+async def _search_duffel_flights(origin: str, destination: str, departure_date: str, adults: int, return_date: str = None) -> List[Dict]:
+    """Real Duffel API search — supports one-way and round-trip."""
     try:
+        slices = [{"origin": origin, "destination": destination, "departure_date": departure_date}]
+        if return_date:
+            slices.append({"origin": destination, "destination": origin, "departure_date": return_date})
+
         async with httpx.AsyncClient(timeout=API_TIMEOUT * 2) as client:
             # Create offer request
             offer_req = await client.post(
                 "https://api.duffel.com/air/offer_requests",
                 json={
                     "data": {
-                        "slices": [{
-                            "origin": origin,
-                            "destination": destination,
-                            "departure_date": departure_date
-                        }],
+                        "slices": slices,
                         "passengers": [{"type": "adult"} for _ in range(adults)],
                         "cabin_class": "economy"
                     }
@@ -87,21 +85,21 @@ async def _search_duffel_flights(origin: str, destination: str, departure_date: 
 
             if offer_req.status_code != 200:
                 logger.error(f"Duffel offer_request failed: {offer_req.status_code} {offer_req.text[:200]}")
-                return generate_mock_flights(origin, destination, departure_date, adults)
+                return generate_mock_flights(origin, destination, departure_date, adults, return_date)
 
             data = offer_req.json().get("data", {})
             offers = data.get("offers", [])
             if not offers:
-                return generate_mock_flights(origin, destination, departure_date, adults)
+                return generate_mock_flights(origin, destination, departure_date, adults, return_date)
 
             return _parse_duffel_offers(offers)
     except Exception as e:
         logger.error(f"Duffel API error: {e}")
-        return generate_mock_flights(origin, destination, departure_date, adults)
+        return generate_mock_flights(origin, destination, departure_date, adults, return_date)
 
 
 def _parse_duffel_offers(offers: list) -> List[Dict]:
-    """Parse Duffel offer responses into our flight format."""
+    """Parse Duffel offer responses — supports one-way and round-trip."""
     flights = []
     for offer in offers[:20]:
         try:
@@ -122,16 +120,13 @@ def _parse_duffel_offers(offers: list) -> List[Dict]:
             carrier = first_seg.get("operating_carrier", {})
             carrier_name = carrier.get("name", first_seg.get("marketing_carrier", {}).get("name", "Unknown"))
             carrier_code = carrier.get("iata_code", first_seg.get("marketing_carrier", {}).get("iata_code", "XX"))
-
-            # Duration from Duffel
             duration_str = outbound.get("duration", "PT0H0M")
 
-            # Fare conditions from Duffel offer
             conditions = offer.get("conditions", {})
             refund_before = conditions.get("refund_before_departure", {})
             change_before = conditions.get("change_before_departure", {})
 
-            flights.append({
+            flight_data = {
                 "id": offer.get("id", str(uuid.uuid4())),
                 "duffel_offer_id": offer.get("id"),
                 "base_price": base_price,
@@ -151,26 +146,47 @@ def _parse_duffel_offers(offers: list) -> List[Dict]:
                 "stops": len(segments) - 1,
                 "stops_text": "Direct" if len(segments) == 1 else f"{len(segments) - 1} escale{'s' if len(segments) > 2 else ''}",
                 "is_demo": False,
-                # Real fare conditions from Duffel
+                "is_roundtrip": len(slices) > 1,
                 "duffel_conditions": {
                     "refundable": refund_before.get("allowed", False),
-                    "refund_penalty": refund_before.get("penalty_amount"),
-                    "refund_penalty_currency": refund_before.get("penalty_currency"),
                     "changeable": change_before.get("allowed", False),
-                    "change_penalty": change_before.get("penalty_amount"),
-                    "change_penalty_currency": change_before.get("penalty_currency"),
                 }
-            })
+            }
+
+            # Parse return leg if present
+            if len(slices) > 1:
+                inbound = slices[1]
+                in_segments = inbound.get("segments", [])
+                if in_segments:
+                    in_first = in_segments[0]
+                    in_last = in_segments[-1]
+                    in_carrier = in_first.get("operating_carrier", {})
+                    flight_data["return_leg"] = {
+                        "airline": in_carrier.get("name", carrier_name),
+                        "carrier_code": in_carrier.get("iata_code", carrier_code),
+                        "flight_number": f"{in_carrier.get('iata_code', carrier_code)}{in_first.get('marketing_carrier_flight_number', '000')}",
+                        "origin": in_first.get("origin", {}).get("iata_code", ""),
+                        "destination": in_last.get("destination", {}).get("iata_code", ""),
+                        "departure_time": in_first.get("departing_at", ""),
+                        "arrival_time": in_last.get("arriving_at", ""),
+                        "duration_formatted": format_duration(inbound.get("duration", "PT0H0M")),
+                        "stops": len(in_segments) - 1,
+                        "stops_text": "Direct" if len(in_segments) == 1 else f"{len(in_segments) - 1} escale",
+                    }
+
+            flights.append(flight_data)
         except Exception as e:
             logger.error(f"Duffel parse error: {e}")
 
     return flights
 
 
-def generate_mock_flights(origin: str, destination: str, date: str, adults: int = 1) -> List[Dict]:
-    """Generate realistic mock flights for sandbox mode."""
+def generate_mock_flights(origin: str, destination: str, date: str, adults: int = 1, return_date: str = None) -> List[Dict]:
+    """Generate realistic mock flights for sandbox mode — supports round-trip."""
     flights = []
     base_prices = [185, 220, 310, 275, 195]
+    if return_date:
+        base_prices = [p * 2 - random.randint(20, 50) for p in base_prices]  # RT slightly cheaper than 2x one-way
     durations_data = [(330, 1), (195, 0), (240, 0), (405, 2), (270, 1)]
 
     for i in range(min(5, len(base_prices))):
@@ -180,7 +196,7 @@ def generate_mock_flights(origin: str, destination: str, date: str, adults: int 
         dur_min, stops = durations_data[i]
         duration = _minutes_to_iso(dur_min)
 
-        flights.append({
+        flight = {
             "id": str(uuid.uuid4()),
             "duffel_offer_id": None,
             "base_price": base_price,
@@ -200,8 +216,27 @@ def generate_mock_flights(origin: str, destination: str, date: str, adults: int 
             "stops": stops,
             "stops_text": "Direct" if stops == 0 else f"{stops} escale{'s' if stops > 1 else ''}",
             "is_demo": True,
+            "is_roundtrip": bool(return_date),
             "duffel_conditions": None
-        })
+        }
+
+        # Add return leg for round-trip
+        if return_date:
+            ret_dur_min = dur_min + random.randint(-30, 30)
+            flight["return_leg"] = {
+                "airline": airline_name,
+                "carrier_code": carrier,
+                "flight_number": f"{carrier}{random.randint(100, 999)}",
+                "origin": destination,
+                "destination": origin,
+                "departure_time": f"{return_date}T{9 + i:02d}:00:00",
+                "arrival_time": f"{return_date}T{15 + i:02d}:30:00",
+                "duration_formatted": format_duration(_minutes_to_iso(ret_dur_min)),
+                "stops": stops,
+                "stops_text": "Direct" if stops == 0 else f"{stops} escale",
+            }
+
+        flights.append(flight)
     return flights
 
 

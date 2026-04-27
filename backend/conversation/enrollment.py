@@ -128,15 +128,11 @@ async def handle_manual_last_name(phone: str, text: str, session: Dict, lang: st
 async def handle_manual_passport(phone: str, text: str, session: Dict, lang: str, is_tp: bool):
     enrollment = session.get("enrollment_data", {})
     txt = text.strip().lower()
-    if txt in ["passer", "skip", "ignorer", "-", "non", "no"]:
+    if txt in ["passer", "skip", "ignorer", "-", "non", "no", "saltar", "pular"]:
         enrollment["passportNumber"] = None
     else:
-        clean = text.strip().upper()
-        if not validate_passport_number(clean):
-            msg = "Numero invalide (6-9 caracteres alphanumeriques). Tapez 'passer' pour ignorer." if lang == "fr" else "Invalid number (6-9 alphanumeric characters). Type 'skip' to skip."
-            await send_whatsapp_message(phone, msg)
-            return
-        enrollment["passportNumber"] = clean
+        # Accept any input as passport number — no validation
+        enrollment["passportNumber"] = text.strip()
     # If nationality already captured (e.g., from OCR), skip to confirm
     if enrollment.get("nationality"):
         confirm_state = ConversationState.CONFIRMING_TP_PROFILE if is_tp else ConversationState.CONFIRMING_PROFILE

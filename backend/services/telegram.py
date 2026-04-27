@@ -30,8 +30,8 @@ def _api_url(method: str) -> str:
     return f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{method}"
 
 
-async def send_telegram_message(to: str, message: str) -> Dict:
-    """Send a text message via Telegram Bot API."""
+async def send_telegram_message(to: str, message: str, reply_markup: dict = None) -> Dict:
+    """Send a text message via Telegram Bot API with optional inline keyboard."""
     chat_id = get_chat_id(to)
     if not chat_id:
         logger.warning(f"[Telegram] No chat_id for {mask_phone(to)}, message logged only")
@@ -43,12 +43,16 @@ async def send_telegram_message(to: str, message: str) -> Dict:
         return {"status": "simulated"}
 
     try:
+        payload = {
+            "chat_id": chat_id,
+            "text": message,
+            "parse_mode": "Markdown",
+        }
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+
         async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
-            resp = await client.post(_api_url("sendMessage"), json={
-                "chat_id": chat_id,
-                "text": message,
-                "parse_mode": "Markdown",
-            })
+            resp = await client.post(_api_url("sendMessage"), json=payload)
             data = resp.json()
             if data.get("ok"):
                 logger.debug(f"[Telegram] Message sent to {mask_phone(to)}")

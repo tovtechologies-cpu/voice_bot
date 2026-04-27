@@ -83,6 +83,8 @@ async def handle_awaiting_destination(phone: str, original_text: str, session: D
             intent["origin"] = resolve_airport(parsed["origin"]) or parsed.get("origin")
         if parsed.get("departure_date"):
             intent["departure_date"] = parsed["departure_date"]
+        if parsed.get("return_date"):
+            intent["return_date"] = parsed["return_date"]
         if parsed.get("passengers"):
             intent["passengers"] = parsed["passengers"]
     else:
@@ -244,16 +246,20 @@ async def search_and_show_flights(phone: str, intent: Dict, lang: str):
         origin = resolve_airport(origin) or "COO"
     destination = resolve_airport(intent["destination"]) or intent["destination"].upper()[:3]
     date = intent["departure_date"]
+    return_date = intent.get("return_date")
     passengers = intent.get("passengers", 1)
 
-    msg = f"Recherche de vols {get_city_name(origin)} -> {get_city_name(destination)}..." if lang == "fr" else f"Searching flights {get_city_name(origin)} -> {get_city_name(destination)}..."
+    if return_date:
+        msg = f"Recherche aller-retour {get_city_name(origin)} -> {get_city_name(destination)}..." if lang == "fr" else f"Searching round-trip {get_city_name(origin)} -> {get_city_name(destination)}..."
+    else:
+        msg = f"Recherche de vols {get_city_name(origin)} -> {get_city_name(destination)}..." if lang == "fr" else f"Searching flights {get_city_name(origin)} -> {get_city_name(destination)}..."
     await send_whatsapp_message(phone, msg)
 
-    flights = await search_flights(origin, destination, date, passengers)
+    flights = await search_flights(origin, destination, date, passengers, return_date)
 
     if not flights:
         await clear_session(phone)
-        msg = "Recherche indisponible, reessayez." if lang == "fr" else "Search unavailable, please try again."
+        msg = "Aucun vol trouve pour cette route." if lang == "fr" else "No flights found for this route."
         await send_whatsapp_message(phone, msg)
         return
 
@@ -264,13 +270,12 @@ async def search_and_show_flights(phone: str, intent: Dict, lang: str):
         await send_whatsapp_message(phone, msg)
         return
 
-    # Get session for country code
     session = await db.sessions.find_one({"phone": phone}, {"_id": 0})
     country = session.get("_country_code", "BJ") if session else "BJ"
 
     flights_with_cat = list(categorized.values())
-    await update_session(phone, {"state": ConversationState.AWAITING_FLIGHT_SELECTION, "intent": intent, "flights": flights_with_cat})
-    await send_whatsapp_message(phone, format_flight_options_message(categorized, origin, destination, date, lang=lang, country=country))
+    await update_session(phone, {"state": ConversationState.AWAITING_FLIGHT_SELECTION, "intent": intent, "flights": flights_with_cat, "_is_roundtrip": bool(return_date)})
+    await send_whatsapp_message(phone, format_flight_options_message(categorized, origin, destination, date, lang=lang, country=country, return_date=return_date))
 
 
 async def handle_flight_selection(phone: str, text: str, session: Dict, lang: str):
@@ -343,8 +348,9 @@ async def handle_flight_selection(phone: str, text: str, session: Dict, lang: st
     }
     await db.bookings.insert_one(booking)
 
-    # Offer return flight option
-    if not session.get("_return_offered"):
+    # Offer return flight option ONLY for one-way flights
+    is_roundtrip = session.get("_is_roundtrip") or selected.get("is_roundtrip")
+    if not is_roundtrip and not session.get("_return_offered"):
         if lang == "fr":
             msg = f"Vol aller reserve : *{get_city_name(selected['origin'])} -> {get_city_name(selected['destination'])}* le {departure_date}\n\nSouhaitez-vous un vol retour ?\n\n*1* Oui, chercher un vol retour\n*2* Non, aller simple uniquement"
         else:

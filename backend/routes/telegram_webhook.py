@@ -139,6 +139,12 @@ async def telegram_webhook(request: Request):
     except Exception:
         return {"ok": True}
 
+    # Handle callback queries (inline keyboard button presses)
+    callback = update.get("callback_query")
+    if callback:
+        await _handle_callback_query(callback)
+        return {"ok": True}
+
     message = update.get("message")
     if not message:
         return {"ok": True}
@@ -209,3 +215,69 @@ async def telegram_webhook(request: Request):
     # ── CONVERSATION HANDLER (non-command messages) ──
     await handle_message(phone, text, audio_id=audio_id, image_id=image_id)
     return {"ok": True}
+
+
+async def _handle_callback_query(callback: dict):
+    """Handle inline keyboard button presses."""
+    import httpx
+
+    callback_id = callback.get("id")
+    from_user = callback.get("from", {})
+    telegram_user_id = str(from_user.get("id", ""))
+    data = callback.get("data", "")
+    chat_id = callback.get("message", {}).get("chat", {}).get("id")
+
+    phone = f"+tg{telegram_user_id}"
+    linked = await db.shadow_profiles.find_one({"telegram_id": telegram_user_id}, {"_id": 0, "phone_number": 1})
+    if linked:
+        phone = linked["phone_number"]
+
+    # Acknowledge the callback
+    if TELEGRAM_BOT_TOKEN:
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                await client.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/answerCallbackQuery",
+                    json={"callback_query_id": callback_id})
+        except Exception:
+            pass
+
+    # Set channel
+    if chat_id:
+        register_chat(phone, chat_id)
+    set_channel(phone, "telegram")
+
+    # Map callback data to conversation messages
+    CALLBACK_MAP = {
+        "action_book": "1",
+        "action_history": "/historique",
+        "action_profile": "/profil",
+        "action_help": "/aide",
+        "enroll_scan": "1",
+        "enroll_manual": "3",
+        "enroll_noid": "3",
+        "travel_self": "1",
+        "travel_other": "2",
+        "travel_group": "1",
+        "flight_1": "1",
+        "flight_2": "2",
+        "flight_3": "3",
+        "flight_new": "annuler",
+        "pay_celtiis": "1",
+        "pay_mtn": "2",
+        "pay_moov": "3",
+        "pay_stripe": "4",
+        "pay_split": "split",
+        "confirm_yes": "1",
+        "confirm_back": "annuler",
+        "confirm_cancel": "annuler",
+        "return_yes": "1",
+        "return_no": "2",
+    }
+
+    mapped_text = CALLBACK_MAP.get(data, data)
+
+    # Handle commands
+    if mapped_text.startswith("/"):
+        await _handle_command(phone, mapped_text)
+    else:
+        await handle_message(phone, mapped_text)

@@ -7,19 +7,25 @@ from utils.helpers import eur_to_xof
 SEP = "━━━━━━━━━━━━━━━━━━━━━"
 
 
-def format_flight_options_message(categorized: Dict, origin: str, destination: str, date: str, lang: str = "fr", country: str = "BJ") -> str:
+def format_flight_options_message(categorized: Dict, origin: str, destination: str, date: str, lang: str = "fr", country: str = "BJ", return_date: str = None) -> str:
     origin_city = get_city_name(origin)
     dest_city = get_city_name(destination)
     count = len(categorized)
+    is_rt = return_date is not None
 
     if lang == "fr":
-        msg = f"*{count} vols trouves pour vous*\n_{origin_city} -> {dest_city} | {date}_\n\n"
+        if is_rt:
+            msg = f"*Vols aller-retour trouves*\n_{origin_city} -> {dest_city} -> {origin_city}_\n_Aller : {date} | Retour : {return_date}_\n\n"
+        else:
+            msg = f"*{count} vols trouves pour vous*\n_{origin_city} -> {dest_city} | {date}_\n\n"
     else:
-        msg = f"*{count} flights found for you*\n_{origin_city} -> {dest_city} | {date}_\n\n"
+        if is_rt:
+            msg = f"*Round-trip flights found*\n_{origin_city} -> {dest_city} -> {origin_city}_\n_Out: {date} | Return: {return_date}_\n\n"
+        else:
+            msg = f"*{count} flights found for you*\n_{origin_city} -> {dest_city} | {date}_\n\n"
 
     labels_fr = {"PLUS_BAS": "LE PLUS BAS", "PLUS_RAPIDE": "LE PLUS RAPIDE", "PREMIUM": "PREMIUM"}
     labels_en = {"PLUS_BAS": "CHEAPEST", "PLUS_RAPIDE": "FASTEST", "PREMIUM": "PREMIUM"}
-    icons = {"PLUS_BAS": "", "PLUS_RAPIDE": "", "PREMIUM": ""}
     labels = labels_fr if lang == "fr" else labels_en
 
     option_num = 1
@@ -27,28 +33,50 @@ def format_flight_options_message(categorized: Dict, origin: str, destination: s
         if cat in categorized:
             f = categorized[cat]
             label = labels.get(cat, cat)
-            icon = icons.get(cat, "")
             price_eur = f['final_price']
             price_xof = eur_to_xof(price_eur)
             airline = f.get('airline', '')
             flight_num = f.get('flight_number', '')
-            dep_time = f.get('departure_time', '')
-            arr_time = f.get('arrival_time', '')
+            dep_time = f.get('departure_time', '').split('T')[1][:5] if 'T' in f.get('departure_time', '') else ''
+            arr_time = f.get('arrival_time', '').split('T')[1][:5] if 'T' in f.get('arrival_time', '') else ''
             duration = f.get('duration_formatted', '')
             stops = f.get('stops_text', '')
 
             msg += f"{SEP}\n"
-            msg += f"{icon} *{label}*\n"
+            msg += f"*{label}*\n\n"
+
+            # Outbound
+            if is_rt:
+                msg += f"*ALLER*\n"
             msg += f"  {airline} | {flight_num}\n"
             if dep_time and arr_time:
-                msg += f"  {dep_time} -> {arr_time} _({duration})_\n"
+                msg += f"  {dep_time} -> {arr_time} _({duration} {stops})_\n"
+
+            # Return leg
+            ret = f.get('return_leg')
+            if ret and is_rt:
+                ret_dep = ret.get('departure_time', '').split('T')[1][:5] if 'T' in ret.get('departure_time', '') else ''
+                ret_arr = ret.get('arrival_time', '').split('T')[1][:5] if 'T' in ret.get('arrival_time', '') else ''
+                ret_dur = ret.get('duration_formatted', '')
+                ret_stops = ret.get('stops_text', '')
+                msg += f"\n*RETOUR*\n" if lang == "fr" else f"\n*RETURN*\n"
+                msg += f"  {ret.get('airline', airline)} | {ret.get('flight_number', '')}\n"
+                if ret_dep and ret_arr:
+                    msg += f"  {ret_dep} -> {ret_arr} _({ret_dur} {ret_stops})_\n"
+
+            # Price
+            from models import calculate_travelioo_fee
+            fee = calculate_travelioo_fee(f.get('base_price', price_eur))
+            if lang == "fr":
+                msg += f"\n  *Prix total : {price_eur}EUR* _({price_xof:,} XOF)_\n"
+                msg += f"  _(dont frais Travelioo : {fee}EUR)_\n\n"
             else:
-                msg += f"  {stops} | {duration}\n"
-            msg += f"  *{price_eur}EUR* _({price_xof:,} XOF)_\n\n"
+                msg += f"\n  *Total price: {price_eur}EUR* _({price_xof:,} XOF)_\n"
+                msg += f"  _(incl. Travelioo fee: {fee}EUR)_\n\n"
             option_num += 1
 
     msg += f"{SEP}\n\n"
-    msg += "*1*, *2* ou *3* pour selectionner." if lang == "fr" else "*1*, *2* or *3* to select."
+    msg += "Tapez *1*, *2* ou *3* pour selectionner." if lang == "fr" else "Type *1*, *2* or *3* to select."
     return msg
 
 
