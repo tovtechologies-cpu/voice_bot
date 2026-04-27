@@ -15,7 +15,8 @@ from conversation.enrollment import (
     handle_ocr_correction
 )
 from conversation.booking import (
-    handle_awaiting_destination, handle_awaiting_date, handle_flight_selection,
+    handle_awaiting_origin, handle_awaiting_destination, handle_awaiting_date,
+    handle_awaiting_return_flight, handle_flight_selection,
     handle_payment_method, handle_pre_debit_confirm, handle_retry,
     handle_payment_fasttrack
 )
@@ -287,11 +288,17 @@ async def handle_message(phone: str, message_text: str, audio_id: str = None, im
         return
 
     # === BOOKING STATES ===
+    if state == ConversationState.AWAITING_ORIGIN:
+        await handle_awaiting_origin(phone, original_text, session, lang)
+        return
     if state == ConversationState.AWAITING_DESTINATION:
         await handle_awaiting_destination(phone, original_text, session, lang)
         return
     if state == ConversationState.AWAITING_DATE:
         await handle_awaiting_date(phone, original_text, text, session, lang)
+        return
+    if state == ConversationState.AWAITING_RETURN_FLIGHT:
+        await handle_awaiting_return_flight(phone, text, session, lang)
         return
     if state == ConversationState.AWAITING_FLIGHT_SELECTION:
         await handle_flight_selection(phone, text, session, lang)
@@ -353,9 +360,12 @@ async def handle_message(phone: str, message_text: str, audio_id: str = None, im
         await handle_modification_confirm(phone, text, session, lang)
         return
 
-    # Fallback
-    await clear_session(phone)
-    await start_conversation(phone, lang)
+    # Fallback — NEVER stay silent
+    if lang == "fr":
+        msg = "Desole, je n'ai pas compris votre choix.\n\nVeuillez selectionner une option valide ou tapez *annuler* pour recommencer."
+    else:
+        msg = "Sorry, I didn't understand your choice.\n\nPlease select a valid option or type *cancel* to start over."
+    await send_whatsapp_message(phone, msg)
 
 
 async def start_conversation(phone: str, lang: str):

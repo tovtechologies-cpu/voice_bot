@@ -75,9 +75,9 @@ async def _show_enrollment_menu(phone: str, lang: str, is_tp: bool = False):
 async def handle_enrollment_method_selection(phone: str, text: str, session: Dict, lang: str, is_tp: bool = False):
     if text in ["1", "2"]:
         if lang == "fr":
-            msg = "Envoyez une photo claire de la page principale de votre passeport (page avec votre photo).\n\nAssurez-vous que les deux lignes du bas (zone MRZ) sont bien visibles."
+            msg = "Prenez une photo de la page principale de votre passeport (page avec votre photo et les informations).\n\nConseils pour une bonne lecture :\n- Posez le passeport a plat\n- Eclairage uniforme (pas de reflet)\n- Les 2 lignes du bas (MRZ) doivent etre visibles\n\nEnvoyez la photo maintenant."
         else:
-            msg = "Send a clear photo of the main page of your passport (the page with your photo).\n\nMake sure the two bottom lines (MRZ zone) are visible."
+            msg = "Take a photo of the main page of your passport (the page with your photo and information).\n\nTips for good OCR reading:\n- Place passport flat\n- Uniform lighting (no glare)\n- Bottom 2 lines (MRZ) must be visible\n\nSend the photo now."
         scan_state = ConversationState.ENROLLING_TP_SCAN if is_tp else ConversationState.ENROLLING_SCAN
         await update_session(phone, {"state": scan_state})
         await send_whatsapp_message(phone, msg)
@@ -258,9 +258,25 @@ async def handle_passport_scan(phone: str, image_id: str, state: str, session: D
     await send_whatsapp_message(phone, msg)
     data = await extract_passport_data(image_bytes)
     if not data.get("success"):
-        msg = "Je n'ai pas pu lire votre passeport.\nReessayez avec une photo plus nette ou choisissez la saisie manuelle (option 3)." if lang == "fr" else "I couldn't read your passport.\nTry again with a clearer photo or choose manual entry (option 3)."
-        method_state = ConversationState.ENROLLING_THIRD_PARTY_METHOD if is_tp else ConversationState.ENROLLMENT_METHOD
-        await update_session(phone, {"state": method_state})
+        # Even if "success" is False, check if we extracted ANY useful data
+        partial_data = {k: data.get(k) for k in ["firstName", "lastName", "passportNumber", "nationality", "dateOfBirth", "expiryDate"] if data.get(k)}
+        if partial_data:
+            # We got some data — use interactive correction for the rest
+            enrollment = {k: data.get(k) for k in ["firstName", "lastName", "passportNumber", "nationality", "dateOfBirth", "expiryDate"]}
+            missing = [k for k in ["firstName", "lastName", "passportNumber", "nationality"] if not enrollment.get(k)]
+            if lang == "fr":
+                msg = "J'ai pu lire partiellement votre passeport. Je vais vous demander les informations manquantes."
+            else:
+                msg = "I partially read your passport. I'll ask for the missing information."
+            await send_whatsapp_message(phone, msg)
+            await start_ocr_correction(phone, enrollment, missing, lang, is_tp=is_tp)
+            return
+        # Truly unreadable
+        if lang == "fr":
+            msg = "Je n'ai pas pu lire votre passeport.\n\nEssayez a nouveau :\n- Photo plus nette\n- Eclairage uniforme\n- MRZ visible (2 lignes en bas)\n\nOu tapez *3* pour la saisie manuelle."
+        else:
+            msg = "I couldn't read your passport.\n\nTry again:\n- Clearer photo\n- Uniform lighting\n- MRZ visible (2 bottom lines)\n\nOr type *3* for manual entry."
+        # Stay in scan state so they can retry
         await send_whatsapp_message(phone, msg)
         return
 
@@ -403,11 +419,11 @@ async def handle_passenger_count(phone: str, text: str, session: Dict, lang: str
     if count > 1:
         msg = "La reservation multi-passagers arrive bientot.\nPour l'instant, je peux traiter 1 passager a la fois." if lang == "fr" else "Multi-passenger booking coming soon.\nFor now, I can process 1 passenger at a time."
         await send_whatsapp_message(phone, msg)
-    await update_session(phone, {"state": ConversationState.AWAITING_DESTINATION, "intent": {}})
+    await update_session(phone, {"state": ConversationState.AWAITING_ORIGIN, "intent": {}})
     if lang == "fr":
-        msg = "Ou souhaitez-vous aller ?\n_\"Je veux un vol pour Paris vendredi prochain\"_"
+        msg = "D'ou partez-vous ?\n_Exemple : Cotonou, Paris, Dakar, COO, CDG..._"
     else:
-        msg = "Where would you like to go?\n_\"I need a flight to Paris next Friday\"_"
+        msg = "Where are you departing from?\n_Example: Cotonou, Paris, Dakar, COO, CDG..._"
     await send_whatsapp_message(phone, msg)
 
 

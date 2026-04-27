@@ -25,6 +25,52 @@ from database import db
 logger = logging.getLogger("BookingHandler")
 
 
+async def handle_awaiting_origin(phone: str, original_text: str, session: Dict, lang: str):
+    """Handle origin city/airport input."""
+    intent = session.get("intent", {})
+
+    # Try IATA code first (3 letters)
+    text_upper = original_text.strip().upper()
+    if len(text_upper) == 3 and resolve_airport(text_upper):
+        intent["origin"] = text_upper
+    else:
+        origin_code = resolve_airport(original_text)
+        if origin_code:
+            intent["origin"] = origin_code
+        else:
+            # Check fuzzy matches
+            if len(original_text.strip()) >= 3:
+                suggestions = suggest_airports(original_text, limit=3)
+                close_matches = [s for s in suggestions if s["score"] >= 65]
+            else:
+                close_matches = []
+
+            if close_matches:
+                if lang == "fr":
+                    msg = "Je n'ai pas reconnu cette ville. Vouliez-vous dire :\n"
+                    for i, s in enumerate(close_matches, 1):
+                        msg += f"*{i}* {s['city'].title()} ({s['code']})\n"
+                else:
+                    msg = "I didn't recognize that city. Did you mean:\n"
+                    for i, s in enumerate(close_matches, 1):
+                        msg += f"*{i}* {s['city'].title()} ({s['code']})\n"
+            else:
+                if lang == "fr":
+                    msg = "Je n'ai pas reconnu cette ville de depart.\n_Exemples : Cotonou, Paris, Dakar, COO, CDG, DSS_\n\nReessayez :"
+                else:
+                    msg = "I didn't recognize that departure city.\n_Examples: Cotonou, Paris, Dakar, COO, CDG, DSS_\n\nTry again:"
+            await send_whatsapp_message(phone, msg)
+            return
+
+    origin_name = get_city_name(intent["origin"])
+    await update_session(phone, {"state": ConversationState.AWAITING_DESTINATION, "intent": intent})
+    if lang == "fr":
+        msg = f"Depart : *{origin_name}* ({intent['origin']})\n\nOu souhaitez-vous aller ?\n_Exemple : Paris, Dakar, Dubai, CDG..._"
+    else:
+        msg = f"Departing from: *{origin_name}* ({intent['origin']})\n\nWhere would you like to go?\n_Example: Paris, Dakar, Dubai, CDG..._"
+    await send_whatsapp_message(phone, msg)
+
+
 async def handle_awaiting_destination(phone: str, original_text: str, session: Dict, lang: str):
     intent = session.get("intent", {})
     parsed = await parse_travel_intent(original_text, lang)
@@ -105,8 +151,97 @@ async def handle_awaiting_date(phone: str, original_text: str, text: str, sessio
     await search_and_show_flights(phone, intent, lang)
 
 
+async def handle_awaiting_return_flight(phone: str, text: str, session: Dict, lang: str):
+    """Handle return flight option — yes or no."""
+    selected = session.get("selected_flight", {})
+
+    if text in ["1", "oui", "yes"]:
+        # Search return flights (reverse route)
+        origin = selected.get("destination", "")
+        destination = selected.get("origin", "")
+        if lang == "fr":
+            msg = f"Quelle date pour le retour {get_city_name(origin)} -> {get_city_name(destination)} ?\n_Exemple : lundi, dans 5 jours, 20 mai..._"
+        else:
+            msg = f"When do you want to return {get_city_name(origin)} -> {get_city_name(destination)}?\n_Example: Monday, in 5 days, May 20..._"
+        await update_session(phone, {
+            "state": ConversationState.AWAITING_DATE,
+            "intent": {"origin": origin, "destination": destination},
+            "_is_return_leg": True,
+        })
+        await send_whatsapp_message(phone, msg)
+        return
+
+    if text in ["2", "non", "no"]:
+        # Continue to payment for the one-way booking
+        await _proceed_to_payment(phone, session, lang)
+        return
+
+    # Invalid input
+    msg = "Repondez *1* (oui, vol retour) ou *2* (non, aller simple)" if lang == "fr" else "Reply *1* (yes, return flight) or *2* (no, one-way)"
+    await send_whatsapp_message(phone, msg)
+
+
+async def _proceed_to_payment(phone: str, session: Dict, lang: str):
+    """Continue to payment menu after return flight decision."""
+    selected = session.get("selected_flight", {})
+    pricing = session.get("_pricing", {})
+
+    booking_passenger_id = session.get("booking_passenger_id")
+    passenger = await get_passenger_by_id(booking_passenger_id) if booking_passenger_id else None
+
+    departure_date = selected.get("departure_time", "").split("T")[0]
+    fare = get_fare_conditions(departure_date)
+
+    country = session.get("_country_code", "BJ")
+    from payment_drivers.router import get_payment_menu_for_country, get_driver
+    menu = get_payment_menu_for_country(country, lang)
+    menu_driver_names = [m["driver_name"] for m in menu]
+
+    # Fast-track check
+    from services.shadow_profile import get_or_create_shadow_profile
+    shadow = await get_or_create_shadow_profile(phone, channel="whatsapp")
+    preferred_methods = shadow.get("payment_methods", [])
+    fasttrack_driver = None
+    if preferred_methods:
+        for method in reversed(preferred_methods):
+            if method in menu_driver_names:
+                fasttrack_driver = method
+                break
+
+    if fasttrack_driver:
+        driver_obj = get_driver(fasttrack_driver)
+        from models import format_price_display
+        driver_label = driver_obj.display_name if driver_obj else fasttrack_driver
+        total_display = format_price_display(pricing.get("total_eur", 0), country)
+        fn = passenger.get("firstName", "") if passenger else ""
+        if lang == "fr":
+            msg = f"*Bonjour {fn}*\n\nVol : {selected.get('origin','')} -> {selected.get('destination','')}\n*Total : {total_display}*\n\nPayer avec *{driver_label}* comme la derniere fois ?\n\n*1* Oui, payer avec {driver_label}\n*2* Choisir une autre methode"
+        else:
+            msg = f"*Welcome back {fn}*\n\nFlight: {selected.get('origin','')} -> {selected.get('destination','')}\n*Total: {total_display}*\n\nPay with *{driver_label}* like last time?\n\n*1* Yes, pay with {driver_label}\n*2* Choose another method"
+        await update_session(phone, {
+            "state": ConversationState.PAYMENT_FASTTRACK,
+            "_payment_menu": menu_driver_names,
+            "_fare_conditions": {"summary": fare.get("conditions_summary", ""), "raw": fare.get("conditions_raw", ""), "refundable": fare.get("refundable", "NO")},
+            "_fasttrack_driver": fasttrack_driver,
+        })
+        await send_whatsapp_message(phone, msg)
+        return
+
+    # Full payment menu
+    msg = format_payment_menu(menu, pricing, country, lang)
+    await update_session(phone, {
+        "state": ConversationState.AWAITING_PAYMENT_METHOD,
+        "_payment_menu": menu_driver_names,
+        "_pricing": pricing,
+        "_fare_conditions": {"summary": fare.get("conditions_summary", ""), "raw": fare.get("conditions_raw", ""), "refundable": fare.get("refundable", "NO")},
+    })
+    await send_whatsapp_message(phone, msg)
+
+
 async def search_and_show_flights(phone: str, intent: Dict, lang: str):
-    origin = resolve_airport(intent.get("origin", "Cotonou")) or "COO"
+    origin = intent.get("origin", "COO")
+    if origin != "COO" and len(origin) != 3:
+        origin = resolve_airport(origin) or "COO"
     destination = resolve_airport(intent["destination"]) or intent["destination"].upper()[:3]
     date = intent["departure_date"]
     passengers = intent.get("passengers", 1)
@@ -207,6 +342,23 @@ async def handle_flight_selection(phone: str, text: str, session: Dict, lang: st
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     await db.bookings.insert_one(booking)
+
+    # Offer return flight option
+    if not session.get("_return_offered"):
+        if lang == "fr":
+            msg = f"Vol aller reserve : *{get_city_name(selected['origin'])} -> {get_city_name(selected['destination'])}* le {departure_date}\n\nSouhaitez-vous un vol retour ?\n\n*1* Oui, chercher un vol retour\n*2* Non, aller simple uniquement"
+        else:
+            msg = f"Outbound flight reserved: *{get_city_name(selected['origin'])} -> {get_city_name(selected['destination'])}* on {departure_date}\n\nWould you like a return flight?\n\n*1* Yes, search a return flight\n*2* No, one-way only"
+        await update_session(phone, {
+            "state": ConversationState.AWAITING_RETURN_FLIGHT,
+            "selected_flight": selected,
+            "booking_id": booking["id"],
+            "booking_ref": booking_ref,
+            "_pricing": pricing,
+            "_return_offered": True,
+        })
+        await send_whatsapp_message(phone, msg)
+        return
 
     # Get country-aware payment menu
     country = session.get("_country_code", "BJ")
