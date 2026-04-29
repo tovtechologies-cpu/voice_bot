@@ -18,10 +18,28 @@ WHISPER_PROMPT = (
 )
 
 
+def _is_placeholder(key: Optional[str]) -> bool:
+    """Detect placeholder/default values that should be ignored."""
+    if not key:
+        return True
+    low = key.strip().lower()
+    return (
+        low.startswith("your_")
+        or low in ("changeme", "placeholder", "todo", "")
+        or "_here" in low
+    )
+
+
 def _get_api_key() -> Optional[str]:
-    """Get OpenAI API key — try OPENAI_API_KEY first, then EMERGENT_LLM_KEY."""
-    key = os.environ.get("OPENAI_API_KEY") or os.environ.get("EMERGENT_LLM_KEY")
-    return key if key else None
+    """Get OpenAI API key — try OPENAI_API_KEY first, then EMERGENT_LLM_KEY.
+    Skip placeholder values (e.g. 'your_whisper_key_here')."""
+    primary = os.environ.get("OPENAI_API_KEY")
+    fallback = os.environ.get("EMERGENT_LLM_KEY")
+    if not _is_placeholder(primary):
+        return primary
+    if not _is_placeholder(fallback):
+        return fallback
+    return None
 
 
 async def _download_telegram_audio(file_id: str) -> Optional[bytes]:

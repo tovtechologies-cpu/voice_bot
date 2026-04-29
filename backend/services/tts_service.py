@@ -8,9 +8,18 @@ import openai
 logger = logging.getLogger("TTSService")
 
 
+def _is_placeholder(key):
+    if not key:
+        return True
+    low = key.strip().lower()
+    return low.startswith("your_") or "_here" in low or low in ("changeme", "placeholder", "todo", "")
+
+
 class TTSService:
     def __init__(self):
-        self.api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("EMERGENT_LLM_KEY")
+        primary = os.environ.get("OPENAI_API_KEY")
+        fallback = os.environ.get("EMERGENT_LLM_KEY")
+        self.api_key = primary if not _is_placeholder(primary) else (fallback if not _is_placeholder(fallback) else None)
         self.voice = os.environ.get("TTS_VOICE", "nova")
         self.enabled = os.environ.get("TTS_ENABLED", "true").lower() == "true"
         if self.api_key and self.enabled:

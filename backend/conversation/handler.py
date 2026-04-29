@@ -1,6 +1,7 @@
 """Main conversation handler - message dispatcher."""
 import logging
 from typing import Dict
+from database import db
 from models import ConversationState
 from services.session import get_or_create_session, update_session, clear_session, get_passenger_by_phone, get_passenger_by_id
 from services.whatsapp import send_whatsapp_message
