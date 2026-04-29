@@ -32,6 +32,41 @@ logger = logging.getLogger("ConversationHandler")
 
 
 async def handle_message(phone: str, message_text: str, audio_id: str = None, image_id: str = None):
+    """Public entry point — adds crash protection + voice TTS post-hook around the dispatcher."""
+    user_sent_voice = bool(audio_id)
+    channel_label = "AUDIO-TG" if (audio_id or "").startswith("tg:") else "AUDIO-WA"
+    if user_sent_voice:
+        logger.info(f"[{channel_label}] Incoming voice for {phone}: id={audio_id[:24]}...")
+
+    try:
+        await _handle_message_inner(phone, message_text, audio_id=audio_id, image_id=image_id)
+    except Exception as e:
+        import traceback
+        logger.error(f"[HANDLER] Crashed: {type(e).__name__}: {e}")
+        logger.error(traceback.format_exc())
+        # Send fallback so user is never left in silence
+        try:
+            await send_whatsapp_message(
+                phone,
+                "Une erreur est survenue.\nTapez /start pour recommencer."
+            )
+        except Exception as fallback_err:
+            logger.error(f"[HANDLER] Fallback send also failed: {fallback_err}")
+        return
+
+    # Send TTS voice response if user originally sent voice
+    if user_sent_voice:
+        try:
+            from services.whatsapp import get_last_response_for
+            last_response = get_last_response_for(phone)
+            if last_response:
+                await send_voice_if_needed(phone, last_response, force=True)
+        except Exception as e:
+            logger.error(f"[TTS] Voice response failed: {type(e).__name__}: {e}")
+            # Fail silently — text was already sent
+
+
+async def _handle_message_inner(phone: str, message_text: str, audio_id: str = None, image_id: str = None):
     """Main entry point for all WhatsApp/Telegram/webchat messages."""
     # Rate limiting
     allowed = await check_rate_limit(phone, "message")
@@ -52,14 +87,22 @@ async def handle_message(phone: str, message_text: str, audio_id: str = None, im
 
     # Voice -> transcription
     if audio_id and not message_text:
-        transcribed = await transcribe_audio(audio_id)
+        try:
+            transcribed = await transcribe_audio(audio_id)
+        except Exception as e:
+            logger.error(f"[AUDIO] Transcription crashed: {type(e).__name__}: {e}")
+            transcribed = None
+
         if transcribed:
             message_text = transcribed
-            logger.info(f"Voice transcription for {phone}: '{transcribed[:80]}'")
+            logger.info(f"[AUDIO] Transcribed for {phone}: '{transcribed[:80]}'")
         else:
-            from services.i18n import t as _t, detect_lang_from_phone as _dlp
-            lang_for_audio = session.get("language") or _dlp(phone)
-            msg = _t("audio_failed", lang_for_audio)
+            logger.warning(f"[AUDIO] Empty transcription for {phone}")
+            msg = (
+                "Je n'ai pas pu comprendre votre audio.\n\n"
+                "Tapez votre demande par ecrit :\n"
+                "_Exemple : Paris vendredi retour lundi_"
+            )
             await send_whatsapp_message(phone, msg)
             return
 

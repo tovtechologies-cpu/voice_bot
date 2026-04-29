@@ -16,6 +16,14 @@ logger = logging.getLogger("WhatsAppService")
 _last_message_sent_at = None
 _last_message_received_at = None
 
+# Track last bot text per phone (for voice TTS post-hook)
+_last_response_per_phone: Dict[str, str] = {}
+
+
+def get_last_response_for(phone: str) -> str:
+    """Return the last text the bot sent to this phone (used by TTS post-hook)."""
+    return _last_response_per_phone.get(phone, "")
+
 
 def get_last_message_sent_at():
     return _last_message_sent_at
@@ -156,6 +164,10 @@ def chunk_message(message: str, limit: int = WHATSAPP_MSG_LIMIT) -> list:
 # ---------------------------------------------------------------------------
 async def send_whatsapp_message(to: str, message: str) -> Dict:
     """Send a text message, auto-routing to Telegram/webchat based on channel."""
+    # Track last bot text for downstream TTS post-hook
+    if message:
+        _last_response_per_phone[to] = message
+
     from services.channel import get_channel
     channel = get_channel(to)
 

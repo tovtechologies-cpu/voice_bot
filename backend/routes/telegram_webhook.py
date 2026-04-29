@@ -212,8 +212,23 @@ async def telegram_webhook(request: Request):
     if not text and not audio_id and not image_id:
         return {"ok": True}
 
+    if audio_id:
+        logger.info(f"[AUDIO-TG] Received audio for chat {chat_id}: {audio_id[:24]}")
+
     # ── CONVERSATION HANDLER (non-command messages) ──
-    await handle_message(phone, text, audio_id=audio_id, image_id=image_id)
+    try:
+        await handle_message(phone, text, audio_id=audio_id, image_id=image_id)
+    except Exception as e:
+        import traceback
+        logger.error(f"[Telegram] Handler crashed: {type(e).__name__}: {e}")
+        logger.error(traceback.format_exc())
+        try:
+            await send_telegram_message(
+                phone,
+                "Une erreur est survenue.\nTapez /start pour recommencer."
+            )
+        except Exception:
+            pass
     return {"ok": True}
 
 

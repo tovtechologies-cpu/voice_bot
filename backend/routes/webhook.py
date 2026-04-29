@@ -72,9 +72,21 @@ async def _process_message_async(phone: str, text_body: str, audio_id: str, imag
         set_channel(normalized, "whatsapp")
         await update_user_message_timestamp(normalized)
         set_last_message_received_at()
+        if audio_id:
+            logger.info(f"[AUDIO-WA] Received audio_id for {mask_phone(normalized)}")
         await handle_message(normalized, text_body, audio_id=audio_id, image_id=image_id)
     except Exception as e:
-        logger.error(f"[WEBHOOK] Handler error for {mask_phone(phone)}: {e}")
+        import traceback
+        logger.error(f"[WEBHOOK] Handler error for {mask_phone(phone)}: {type(e).__name__}: {e}")
+        logger.error(traceback.format_exc())
+        try:
+            from services.whatsapp import send_whatsapp_message as _send_wa
+            await _send_wa(
+                normalize_phone(phone),
+                "Une erreur est survenue.\nTapez /start pour recommencer."
+            )
+        except Exception as fallback_err:
+            logger.error(f"[WEBHOOK] Fallback send failed: {fallback_err}")
 
 
 @router.post("/webhook")
