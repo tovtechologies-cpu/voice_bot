@@ -33,13 +33,26 @@ async def webchat_message(request: Request):
     session_id = "guest"
     try:
         body = await request.json()
-        session_id = body.get("session_id", "guest")
-        message = body.get("message", "").strip()
+        session_id = body.get("session_id") or body.get("sessionId") or "guest"
+        # Accept any common field name from the frontend to avoid silent empty-message bugs
+        message = (
+            body.get("message")
+            or body.get("text")
+            or body.get("content")
+            or body.get("input")
+            or body.get("query")
+            or ""
+        )
+        message = message.strip() if isinstance(message, str) else ""
 
         phone = f"+web{session_id}"
         set_channel(phone, "webchat")
 
         if not message:
+            logger.warning(
+                f"[Webchat] EMPTY MESSAGE | session_id={session_id} | "
+                f"received_keys={list(body.keys())} | hint=frontend must send {{\"message\": \"...\"}}"
+            )
             return {"session_id": session_id, "response": "Bonjour ! Dites-moi votre destination.", "options": [], "state": "IDLE"}
 
         logger.info(f"[Webchat] {session_id}: {message[:50]}")
