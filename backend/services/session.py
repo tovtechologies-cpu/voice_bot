@@ -35,6 +35,13 @@ def _default_session_fields(phone: str) -> Dict:
     }
 
 
+
+async def get_session_data(phone: str) -> Dict:
+    """Get session data without creating one."""
+    session = await db.sessions.find_one({"phone": phone}, {"_id": 0})
+    return session or {}
+
+
 async def get_or_create_session(phone: str) -> Dict:
     session = await db.sessions.find_one({"phone": phone}, {"_id": 0})
     if session:

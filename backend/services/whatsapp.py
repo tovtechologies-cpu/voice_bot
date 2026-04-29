@@ -155,9 +155,16 @@ def chunk_message(message: str, limit: int = WHATSAPP_MSG_LIMIT) -> list:
 # Send text message
 # ---------------------------------------------------------------------------
 async def send_whatsapp_message(to: str, message: str) -> Dict:
-    """Send a text message, auto-routing to Telegram if the user is on that channel."""
+    """Send a text message, auto-routing to Telegram/webchat based on channel."""
     from services.channel import get_channel
-    if get_channel(to) == "telegram":
+    channel = get_channel(to)
+
+    if channel == "webchat":
+        from routes.webchat import collect_webchat_response
+        collect_webchat_response(to, message)
+        return {"status": "webchat_collected"}
+
+    if channel == "telegram":
         from services.telegram import send_telegram_message
         return await send_telegram_message(to, message)
 
@@ -402,3 +409,56 @@ async def download_whatsapp_media(media_id: str) -> Optional[bytes]:
     except Exception as e:
         logger.error(f"[WHATSAPP] Media download error: {e}")
     return None
+
+
+
+# ---------------------------------------------------------------------------
+# Send voice (audio) message on WhatsApp
+# ---------------------------------------------------------------------------
+async def send_whatsapp_voice(to: str, audio_bytes: bytes) -> bool:
+    """Upload MP3 audio to WhatsApp and send as voice message."""
+    if not audio_bytes or not WHATSAPP_TOKEN or not WHATSAPP_PHONE_ID:
+        return False
+    import tempfile
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+            tmp.write(audio_bytes)
+            tmp_path = tmp.name
+
+        async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
+            # Upload media
+            with open(tmp_path, "rb") as f:
+                upload_resp = await client.post(
+                    f"{WHATSAPP_BASE_URL}/{WHATSAPP_API_VERSION}/{WHATSAPP_PHONE_ID}/media",
+                    headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"},
+                    data={"messaging_product": "whatsapp"},
+                    files={"file": ("voice.mp3", f, "audio/mpeg")}
+                )
+            media_id = upload_resp.json().get("id")
+            if not media_id:
+                logger.error(f"[WA Voice] Upload failed: {upload_resp.text[:200]}")
+                return False
+
+            # Send audio message
+            normalized = normalize_phone(to)
+            resp = await client.post(
+                f"{WHATSAPP_BASE_URL}/{WHATSAPP_API_VERSION}/{WHATSAPP_PHONE_ID}/messages",
+                headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"},
+                json={"messaging_product": "whatsapp", "to": normalized, "type": "audio", "audio": {"id": media_id}}
+            )
+            if resp.status_code == 200:
+                logger.info(f"[WA Voice] Sent to {mask_phone(to)}")
+                return True
+            logger.error(f"[WA Voice] Send failed: {resp.status_code}")
+            return False
+    except Exception as e:
+        logger.error(f"[WA Voice] Error: {e}")
+        return False
+    finally:
+        if tmp_path:
+            try:
+                import os
+                os.unlink(tmp_path)
+            except Exception:
+                pass

@@ -31,7 +31,7 @@ logger = logging.getLogger("ConversationHandler")
 
 
 async def handle_message(phone: str, message_text: str, audio_id: str = None, image_id: str = None):
-    """Main entry point for all WhatsApp messages."""
+    """Main entry point for all WhatsApp/Telegram/webchat messages."""
     # Rate limiting
     allowed = await check_rate_limit(phone, "message")
     if not allowed:
@@ -39,6 +39,10 @@ async def handle_message(phone: str, message_text: str, audio_id: str = None, im
         return
 
     session = await get_or_create_session(phone)
+
+    # Track if input was voice
+    if audio_id:
+        await update_session(phone, {"_last_input_was_voice": True})
 
     if session.pop("_expired", False):
         lang = session.get("language", "fr")
@@ -407,6 +411,7 @@ async def handle_new_user(phone: str, lang: str):
     msg = t("welcome_consent", lang)
     await update_session(phone, {"state": ConversationState.AWAITING_CONSENT, "enrolling_for": "self"})
     await send_whatsapp_message(phone, msg)
+    await send_voice_if_needed(phone, "Bienvenue sur Travelioo ! Dites-moi votre destination et vos dates de voyage.", force=True)
 
 
 async def handle_returning_user(phone: str, passenger: Dict, lang: str):
@@ -416,3 +421,34 @@ async def handle_returning_user(phone: str, passenger: Dict, lang: str):
     msg = t("returning_user", lang, name=fn, fullname=f"{fn} {ln}")
     await update_session(phone, {"state": ConversationState.ASKING_TRAVEL_PURPOSE})
     await send_whatsapp_message(phone, msg)
+
+
+async def send_voice_if_needed(phone: str, text: str, force: bool = False):
+    """Send TTS voice response after text if user sent voice or if force=True."""
+    from services.channel import get_channel
+    channel = get_channel(phone)
+    if channel == "webchat":
+        return  # Webchat handles audio via base64 in response
+
+    session = await db.sessions.find_one({"phone": phone}, {"_id": 0})
+    was_voice = session.get("_last_input_was_voice", False) if session else False
+    if not was_voice and not force:
+        return
+
+    try:
+        from services.tts_service import tts_service
+        audio_bytes = await tts_service.synthesize(text)
+        if not audio_bytes:
+            return
+
+        if channel == "whatsapp":
+            from services.whatsapp import send_whatsapp_voice
+            await send_whatsapp_voice(phone, audio_bytes)
+        elif channel == "telegram":
+            from services.telegram import send_telegram_voice_bytes
+            await send_telegram_voice_bytes(phone, audio_bytes)
+
+        # Reset voice flag
+        await update_session(phone, {"_last_input_was_voice": False})
+    except Exception as e:
+        logger.error(f"[Voice] TTS send error: {e}")

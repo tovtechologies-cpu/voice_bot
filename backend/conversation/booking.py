@@ -276,6 +276,11 @@ async def search_and_show_flights(phone: str, intent: Dict, lang: str):
     flights_with_cat = list(categorized.values())
     await update_session(phone, {"state": ConversationState.AWAITING_FLIGHT_SELECTION, "intent": intent, "flights": flights_with_cat, "_is_roundtrip": bool(return_date)})
     await send_whatsapp_message(phone, format_flight_options_message(categorized, origin, destination, date, lang=lang, country=country, return_date=return_date))
+    # Voice summary for flight results
+    from conversation.handler import send_voice_if_needed
+    best = flights_with_cat[0] if flights_with_cat else {}
+    voice_text = f"J'ai trouve {len(flights_with_cat)} vols. Le plus bas est a {best.get('final_price', 0)} euros. Repondez 1, 2 ou 3 pour choisir."
+    await send_voice_if_needed(phone, voice_text)
 
 
 async def handle_flight_selection(phone: str, text: str, session: Dict, lang: str):

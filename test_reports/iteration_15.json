@@ -1,0 +1,48 @@
+{
+  "summary": "Pre-demo regression — 3 critical items tested. Webchat (item 1) PASSES end-to-end with French reply + session persistence. Webhook signature 403 + SIG-DEBUG log line (item 3) PASSES with all 3 required fields. Telegram/Whisper pipeline (item 2) PARTIAL FAIL: whisper module imports clean and OpenAI client initializes, BUT (a) ffmpeg binary is MISSING from PATH (OGG->MP3 conversion will fail at demo) and (b) handler.py:433 has NameError 'db' is not defined causing /api/test/simulate (telegram channel) to return 500 for any new user. 7/9 tests passed (78%).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "conversation/handler.py:433 send_voice_if_needed", "issue": "NameError: name 'db' is not defined. Module never imports `db` from `database`. Triggered for any non-webchat user when force=True (e.g., welcome message for new Telegram/WhatsApp user). Causes /api/test/simulate channel='telegram' to return 500. Webchat works only because the function returns early for webchat channel BEFORE the db reference.", "priority": "CRITICAL"},
+      {"endpoint": "services/whisper.py (ffmpeg subprocess)", "issue": "ffmpeg binary not installed / not on PATH (`which ffmpeg` -> not found). OGG->MP3 conversion in _convert_ogg_to_mp3 will fail. Code falls back to raw OGG which OpenAI Whisper may reject. This breaks the entire Telegram voice transcription demo path.", "priority": "CRITICAL"},
+      {"endpoint": "OPENAI_API_KEY env value", "issue": "Backend logs show TTS calls return 401 with 'Incorrect API key provided: your_whi*********here' — OPENAI_API_KEY in /app/backend/.env appears to be a placeholder ('your_whisper_key_here' style). Whisper STT tests pass key-presence check but actual API call would also 401 in demo. Voice features (TTS + Whisper STT) will fail at demo time.", "priority": "CRITICAL"}
+    ],
+    "minor": []
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "passed_tests": [
+    "POST /api/webchat/message returns 200 with non-empty 'response' and matching 'session_id' for French 'bonjour'",
+    "POST /api/webchat/message reusing same session_id persists session state in Mongo (verified via GET /api/webchat/session/{sid})",
+    "services.whisper module imports clean — transcribe_audio/_convert_ogg_to_mp3/_download_telegram_audio/_transcribe_bytes all present, signature accepts audio_id",
+    "OPENAI_API_KEY env presence check (key string non-empty)",
+    "openai.OpenAI(api_key=...) initializes without raising",
+    "GET /api/webhook?hub.mode=subscribe&hub.verify_token=travelioo_verify_2024&hub.challenge=test123 returns 200 body 'test123'",
+    "POST /api/webhook with WRONG x-hub-signature-256 returns 403 AND backend log emits '[WEBHOOK][SIG-DEBUG] match=False | secret_first10=travelioo2 | sig_received_first10=sha256=dea | sig_expected_first10=sha256=cfd | secret_len=13 | payload_len=82' — all 3 required fields (secret_first10, sig_received_first10, sig_expected_first10) present"
+  ],
+  "failed_tests": [
+    "test_ffmpeg_available — ffmpeg binary not on PATH",
+    "test_telegram_handler_dispatches_text — POST /api/test/simulate channel='telegram' returns 500 due to NameError 'db' in handler.py:433"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_demo_regression.py",
+    "/app/test_reports/pytest/demo_regression_results.xml"
+  ],
+  "action_items": [
+    "Fix /app/backend/conversation/handler.py: add `from database import db` at top (currently line 433 uses `db.sessions.find_one` but `db` is never imported). This is a hard 500 for any new Telegram/WhatsApp user.",
+    "Install ffmpeg in the runtime image: `apt-get install -y ffmpeg` (required by services/whisper.py _convert_ogg_to_mp3 subprocess call).",
+    "Replace placeholder OPENAI_API_KEY in /app/backend/.env with a real key — current value triggers 401 'Incorrect API key provided: your_whi*********here' on every TTS/Whisper call. Voice features (Telegram voice notes, gTTS replies via OpenAI TTS) WILL FAIL at demo."
+  ],
+  "critical_code_review_comments": [
+    "handler.py:433 references `db` without importing it — clearly unreviewed; only avoided in webchat path because function early-returns for that channel.",
+    "whisper.py uses `subprocess.run(['ffmpeg', ...])` with no graceful fallback when ffmpeg is missing; should detect at startup and surface to /api/demo-check.",
+    "/api/demo-check supposedly verifies ffmpeg per iteration_14, but ffmpeg is currently absent — recommend re-running demo-check and gating the demo on its truthiness.",
+    "webhook.py SIG-DEBUG logging is correctly implemented: prints first10 of secret, received signature, expected signature, plus secret_len and payload_len. Verified working."
+  ],
+  "updated_files": ["/app/backend/tests/test_demo_regression.py"],
+  "success_rate": {"backend": "78% (7/9)", "frontend": "N/A (backend-only)"},
+  "test_credentials": "No auth required. Verify token: travelioo_verify_2024. Test phones: +22990TGTEST1, dynamic TEST_<uuid> session IDs.",
+  "seed_data_creation": "Test session IDs auto-generated per run; cleanup via DELETE /api/test/session/{phone} where applicable.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Pre-demo regression hit 3 demo-blockers: (1) handler.py missing `from database import db` causing 500 on any new Telegram/WhatsApp user welcome path, (2) ffmpeg binary missing -> Whisper OGG->MP3 path broken, (3) OPENAI_API_KEY placeholder -> all TTS/Whisper API calls 401. Webchat (item 1) and webhook signature/SIG-DEBUG (item 3) are confirmed working. Re-run /app/backend/tests/test_demo_regression.py after main agent fixes.",
+  "rca of the issue": "RCA #1 (NameError db): handler.py imports services and conversation modules but never imports `db` from database; line 433 added later without companion import. Repro: POST /api/test/simulate {phone:'+22990TGTEST1', channel:'telegram', message:'bonjour'} -> 500. Mitigation: add `from database import db` to /app/backend/conversation/handler.py. RCA #2 (ffmpeg): runtime container lacks ffmpeg. Mitigation: install via system package manager. RCA #3 (OPENAI_API_KEY): backend/.env contains placeholder string starting 'your_whi...'; logs confirm 'Incorrect API key provided: your_whi*********here'. Mitigation: rotate to a valid key (or rely on EMERGENT_LLM_KEY only by removing the OPENAI_API_KEY override since whisper falls back to it)."
+}

@@ -134,9 +134,20 @@ async def lifespan(app: FastAPI):
 # Create app
 app = FastAPI(title="Travelioo", version="7.1", lifespan=lifespan)
 
-# CORS
-origins = CORS_ORIGINS.split(",") if CORS_ORIGINS != "*" else ["*"]
-app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+# CORS — expanded for website integration
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://travelioo.tech",
+        "https://www.travelioo.tech",
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "*",
+    ],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+)
 
 # Mount routes
 from routes.webhook import router as webhook_router
@@ -149,6 +160,7 @@ from routes.hitl import router as hitl_router
 from routes.disruptions import router as disruption_router
 from routes.fare_alerts import router as fare_alerts_router
 from routes.demo_check import router as demo_check_router
+from routes.webchat import router as webchat_router
 
 # All routes under /api prefix
 from fastapi import APIRouter
@@ -163,6 +175,7 @@ api_router.include_router(hitl_router)
 api_router.include_router(disruption_router)
 api_router.include_router(fare_alerts_router)
 api_router.include_router(demo_check_router)
+api_router.include_router(webchat_router)
 
 app.include_router(api_router)
 

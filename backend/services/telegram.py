@@ -150,3 +150,24 @@ async def send_telegram_document(to: str, document_url: str, filename: str, capt
     except Exception as e:
         logger.error(f"[Telegram] Document error: {e}")
         return {"status": "failed"}
+
+
+async def send_telegram_voice_bytes(to: str, audio_bytes: bytes) -> bool:
+    """Send voice message via Telegram using raw bytes upload."""
+    chat_id = get_chat_id(to)
+    if not chat_id or not _is_configured() or not audio_bytes:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
+            resp = await client.post(
+                _api_url("sendVoice"),
+                data={"chat_id": str(chat_id)},
+                files={"voice": ("voice.mp3", audio_bytes, "audio/mpeg")}
+            )
+            if resp.json().get("ok"):
+                logger.info(f"[TG Voice] Sent to {mask_phone(to)}")
+                return True
+            logger.error(f"[TG Voice] Failed: {resp.json().get('description')}")
+    except Exception as e:
+        logger.error(f"[TG Voice] Error: {e}")
+    return False

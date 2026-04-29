@@ -36,8 +36,15 @@ def verify_whatsapp_signature(payload_body: bytes, signature_header: str, secret
         hashlib.sha256
     ).hexdigest()
     match = hmac.compare_digest(expected, signature_header)
-    if not match:
-        logger.warning(f"[WEBHOOK] Signature mismatch | received={signature_header[:30]}... | expected={expected[:30]}...")
+    # DEBUG: explicit first-10-chars trace to diagnose Meta App Secret mismatch
+    secret_preview = secret[:10] if secret else "<empty>"
+    received_preview = signature_header[:10] if signature_header else "<empty>"
+    expected_preview = expected[:10] if expected else "<empty>"
+    logger.warning(
+        f"[WEBHOOK][SIG-DEBUG] match={match} | secret_first10={secret_preview} | "
+        f"sig_received_first10={received_preview} | sig_expected_first10={expected_preview} | "
+        f"secret_len={len(secret)} | payload_len={len(payload_body)}"
+    )
     return match
 
 
