@@ -48,13 +48,72 @@ async def webchat_message(request: Request):
         phone = f"+web{session_id}"
         set_channel(phone, "webchat")
 
+        # Handle audio message type
+        message_type = body.get("message_type", "text")
+        audio_data = body.get("audio_data", "")
+        mime_type = body.get("mime_type", "audio/webm")
+        
+        if message_type == "audio" and audio_data:
+            try:
+                import base64 as b64mod
+                audio_bytes = b64mod.b64decode(audio_data)
+                from services.whisper_service import whisper_service
+                # Detect format from mime_type
+                fmt = "webm"
+                if "ogg" in mime_type:
+                    fmt = "ogg"
+                elif "mp4" in mime_type or "m4a" in mime_type:
+                    fmt = "mp4"
+                elif "wav" in mime_type:
+                    fmt = "wav"
+                transcribed = await whisper_service.transcribe(
+                    audio_bytes, fmt
+                )
+                if transcribed:
+                    message = transcribed
+                    logger.info(
+                        f"[Webchat Audio] Transcribed: '{transcribed[:80]}'"
+                    )
+                else:
+                    return {
+                        "session_id": session_id,
+                        "response": (
+                            "🎙️ Je n'ai pas pu comprendre votre audio.\n\n"
+                            "Réessayez en parlant plus clairement\n"
+                            "ou tapez votre demande :\n"
+                            "_Exemple : Paris vendredi retour lundi_"
+                        ),
+                        "options": [],
+                        "state": "AUDIO_FAILED",
+                        "audio_base64": ""
+                    }
+            except Exception as e:
+                logger.error(f"[Webchat Audio] Error: {type(e).__name__}: {e}")
+                return {
+                    "session_id": session_id,
+                    "response": "🎙️ Erreur audio. Tapez votre demande par écrit.",
+                    "options": [],
+                    "state": "AUDIO_FAILED",
+                    "audio_base64": ""
+                }
+        
+        # Handle image message type
+        if message_type == "image" and body.get("image_data"):
+            if not message:
+                message = "image_scan"
+        
         if not message:
             logger.warning(
                 f"[Webchat] EMPTY MESSAGE | session_id={session_id} | "
-                f"received_keys={list(body.keys())} | hint=frontend must send {{\"message\": \"...\"}}"
+                f"received_keys={list(body.keys())}"
             )
-            return {"session_id": session_id, "response": "Bonjour ! Dites-moi votre destination.", "options": [], "state": "IDLE"}
-
+            return {
+                "session_id": session_id,
+                "response": "Bonjour 👋 Dites-moi votre destination.",
+                "options": [],
+                "state": "IDLE"
+            }
+        
         logger.info(f"[Webchat] {session_id}: {message[:50]}")
 
         # Clear buffer before processing
