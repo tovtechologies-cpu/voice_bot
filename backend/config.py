@@ -146,7 +146,7 @@ AIRPORT_CODES = {
     "cairo": "CAI", "marrakech": "RAK", "kinshasa": "FIH", "dakar": "DSS",
     "abuja": "ABV", "dar es salaam": "DAR", "maputo": "MPM", "luanda": "LAD",
     "yaounde": "NSI", "freetown": "FNA", "banjul": "BJL", "nouakchott": "NKC",
-    "porto-novo": "COO", "parakou": "PKO", "ndjamena": "NDJ", "tripoli": "TIP",
+    "parakou": "PKO", "ndjamena": "NDJ", "tripoli": "TIP",
     "antananarivo": "TNR", "kampala": "EBB", "kigali": "KGL", "lusaka": "LUN",
     "harare": "HRE", "windhoek": "WDH", "gaborone": "GBE", "dakar": "DSS",
     "marseille": "MRS", "lyon": "LYS", "nice": "NCE", "toulouse": "TLS",
