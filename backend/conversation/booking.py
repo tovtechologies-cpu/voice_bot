@@ -385,6 +385,7 @@ async def handle_flight_selection(phone: str, text: str, session: Dict, lang: st
     pricing = apply_travelioo_pricing(gds_base)
 
     booking_ref = generate_booking_ref()
+    is_rt = bool(session.get("_is_roundtrip") or selected.get("is_roundtrip"))
     booking = {
         "id": str(uuid.uuid4()),
         "booking_ref": booking_ref,
@@ -397,6 +398,12 @@ async def handle_flight_selection(phone: str, text: str, session: Dict, lang: st
         "origin": selected["origin"],
         "destination": selected["destination"],
         "departure_date": departure_date,
+        "departure_time": selected.get("departure_time", ""),
+        "arrival_time": selected.get("arrival_time", ""),
+        "duration_formatted": selected.get("duration_formatted", ""),
+        "stops_text": selected.get("stops_text", ""),
+        "trip_type": "round_trip" if is_rt else "one_way",
+        "return_leg": selected.get("return_leg") if is_rt else None,
         "gds_price_eur": pricing["gds_price_eur"],
         "travelioo_fee_eur": pricing["travelioo_fee_eur"],
         "price_eur": pricing["total_eur"],

@@ -1,17 +1,79 @@
-"""PDF ticket generation — Travelioo boarding pass style."""
+"""PDF ticket generation — Travelioo boarding pass style (FCFA only, round-trip aware)."""
 import json
 import logging
 from typing import Dict
 from config import TICKETS_DIR
 from services.airport import get_city_name
+from models import format_price_display
 
 logger = logging.getLogger("TicketService")
 
-# Travelioo brand colors
+# Travelioo brand
 BRAND_DARK = "#0A0F1E"
 BRAND_VIOLET = "#6C63FF"
+BRAND_ACCENT = "#F9A826"     # gold accent for "ROUND-TRIP" badge
 BRAND_WHITE = "#FFFFFF"
-BRAND_LIGHT_BG = "#F4F3FF"
+BRAND_MUTED = "#8B8FA3"
+BRAND_LINE = "#E4E4EF"
+BRAND_BG = "#FBFBFE"
+
+SUPPORT_PHONE = "+229 01 49 51 04 62"
+SUPPORT_SITE = "travelioo.tech"
+
+CATEGORY_LABEL = {
+    "PLUS_BAS": "ECO",
+    "PLUS_RAPIDE": "EXPRESS",
+    "PREMIUM": "PREMIUM",
+    "cheapest": "ECO",
+    "fastest": "EXPRESS",
+    "premium": "PREMIUM",
+}
+
+
+def _fmt_time(iso_str: str) -> str:
+    """Extract HH:MM from an ISO timestamp; return '--:--' if missing."""
+    if not iso_str or "T" not in iso_str:
+        return "--:--"
+    try:
+        return iso_str.split("T", 1)[1][:5]
+    except Exception:
+        return "--:--"
+
+
+def _draw_leg(c, x, y, w, label, airline, flight_num, origin, dest,
+              dep_time, arr_time, duration, stops, colors_mod, BRAND_DARK, BRAND_MUTED, BRAND_VIOLET):
+    """Draw one flight leg block. Returns the bottom Y coordinate."""
+    mm = 2.834645669  # 1 mm in points
+    # Leg label (ALLER / RETOUR)
+    c.setFillColor(colors_mod.HexColor(BRAND_VIOLET))
+    c.setFont("Helvetica-Bold", 8)
+    c.drawString(x, y, label)
+
+    # Airline + flight number
+    c.setFillColor(colors_mod.HexColor(BRAND_DARK))
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(x, y - 5 * mm, f"{airline}  {flight_num}")
+
+    # Route with times
+    c.setFont("Helvetica-Bold", 13)
+    c.drawString(x, y - 12 * mm, origin)
+    c.drawString(x + 28 * mm, y - 12 * mm, dep_time)
+
+    c.setFillColor(colors_mod.HexColor(BRAND_MUTED))
+    c.setFont("Helvetica", 9)
+    c.drawString(x + 48 * mm, y - 12 * mm, f"{duration}  {stops}")
+
+    c.setFillColor(colors_mod.HexColor(BRAND_DARK))
+    c.setFont("Helvetica-Bold", 13)
+    c.drawRightString(x + w, y - 12 * mm, arr_time)
+    c.drawRightString(x + w - 22 * mm, y - 12 * mm, dest)
+
+    # Arrow
+    c.setFillColor(colors_mod.HexColor(BRAND_VIOLET))
+    c.setFont("Helvetica-Bold", 12)
+    c.drawCentredString(x + w / 2, y - 12 * mm, "→")
+
+    return y - 16 * mm
 
 
 def generate_ticket_pdf(booking: Dict) -> str:
@@ -19,35 +81,48 @@ def generate_ticket_pdf(booking: Dict) -> str:
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.units import mm
     from reportlab.pdfgen import canvas
+    from reportlab.lib.utils import ImageReader
     import qrcode
     from io import BytesIO
 
-    booking_ref = booking.get('booking_ref', 'TRV-XXXXXX')
+    booking_ref = booking.get("booking_ref", "TRV-XXXXXX")
     filename = f"travelioo_ticket_{booking_ref}.pdf"
     filepath = str(TICKETS_DIR / filename)
 
-    # QR code
-    qr_data = json.dumps({"ref": booking_ref, "pax": booking.get('passenger_name', ''), "route": f"{booking.get('origin')}-{booking.get('destination')}"})
+    is_rt = booking.get("trip_type") == "round_trip" or bool(booking.get("return_leg"))
+    return_leg = booking.get("return_leg") or {}
+
+    # QR encodes the booking ref + route summary
+    route_str = f"{booking.get('origin')}-{booking.get('destination')}"
+    if is_rt:
+        route_str += f"-{booking.get('origin')}"
+    qr_payload = json.dumps({
+        "ref": booking_ref,
+        "pax": booking.get("passenger_name", ""),
+        "route": route_str,
+        "trip": "RT" if is_rt else "OW",
+    })
     qr = qrcode.QRCode(version=1, box_size=8, border=1)
-    qr.add_data(qr_data)
+    qr.add_data(qr_payload)
     qr.make(fit=True)
     qr_img = qr.make_image(fill_color=BRAND_DARK, back_color="white")
     qr_buffer = BytesIO()
-    qr_img.save(qr_buffer, format='PNG')
+    qr_img.save(qr_buffer, format="PNG")
     qr_buffer.seek(0)
 
-    # Create landscape A4 canvas
+    # Canvas
     w, h = landscape(A4)
     c = canvas.Canvas(filepath, pagesize=landscape(A4))
 
-    # Ticket dimensions (centered on page)
-    tw, th = 260 * mm, 130 * mm
+    # Ticket dims — taller if round-trip
+    tw = 260 * mm
+    th = 155 * mm if is_rt else 130 * mm
     tx = (w - tw) / 2
     ty = (h - th) / 2
 
-    # Background card with rounded corners
+    # Outer card
     c.setFillColor(colors.HexColor(BRAND_WHITE))
-    c.setStrokeColor(colors.HexColor("#E0E0E0"))
+    c.setStrokeColor(colors.HexColor(BRAND_LINE))
     c.setLineWidth(1)
     c.roundRect(tx, ty, tw, th, 8 * mm, fill=1, stroke=1)
 
@@ -55,135 +130,160 @@ def generate_ticket_pdf(booking: Dict) -> str:
     header_h = 22 * mm
     c.setFillColor(colors.HexColor(BRAND_DARK))
     c.roundRect(tx, ty + th - header_h, tw, header_h, 8 * mm, fill=1, stroke=0)
-    # Cover bottom rounded corners of header
     c.rect(tx, ty + th - header_h, tw, 8 * mm, fill=1, stroke=0)
 
-    # Header text
+    # Brand wordmark
     c.setFillColor(colors.HexColor(BRAND_WHITE))
-    c.setFont("Helvetica-Bold", 16)
-    c.drawString(tx + 12 * mm, ty + th - 15 * mm, "TRAVELIOO")
-    c.setFont("Helvetica", 10)
-    c.drawString(tx + 70 * mm, ty + th - 15 * mm, "Speak'n Go")
-
-    # Boarding pass label
+    c.setFont("Helvetica-Bold", 17)
+    c.drawString(tx + 12 * mm, ty + th - 14 * mm, "TRAVELIOO")
     c.setFillColor(colors.HexColor(BRAND_VIOLET))
-    c.setFont("Helvetica-Bold", 9)
-    c.drawRightString(tx + tw - 12 * mm, ty + th - 14 * mm, "BOARDING PASS")
+    c.setFont("Helvetica-Oblique", 9)
+    c.drawString(tx + 67 * mm, ty + th - 14 * mm, "Speak'n Go")
 
-    # Content area
+    # BOARDING PASS + trip badge
+    c.setFillColor(colors.HexColor(BRAND_WHITE))
+    c.setFont("Helvetica-Bold", 9)
+    c.drawRightString(tx + tw - 12 * mm, ty + th - 10 * mm, "BOARDING PASS")
+
+    badge_text = "ALLER-RETOUR" if is_rt else "ALLER SIMPLE"
+    badge_color = BRAND_ACCENT if is_rt else BRAND_VIOLET
+    c.setFillColor(colors.HexColor(badge_color))
+    c.setFont("Helvetica-Bold", 8)
+    c.drawRightString(tx + tw - 12 * mm, ty + th - 17 * mm, badge_text)
+
+    # Content region
     content_y = ty + th - header_h - 8 * mm
     left_x = tx + 14 * mm
 
-    # Passenger name
-    c.setFillColor(colors.HexColor("#666666"))
-    c.setFont("Helvetica", 8)
-    c.drawString(left_x, content_y, "PASSENGER NAME / NOM DU PASSAGER")
+    # Row 1: Passenger + Booking ref
+    c.setFillColor(colors.HexColor(BRAND_MUTED))
+    c.setFont("Helvetica", 7)
+    c.drawString(left_x, content_y, "PASSAGER / PASSENGER")
     c.setFillColor(colors.HexColor(BRAND_DARK))
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(left_x, content_y - 6 * mm, booking.get('passenger_name', 'N/A').upper())
+    c.setFont("Helvetica-Bold", 13)
+    c.drawString(left_x, content_y - 5.5 * mm, booking.get("passenger_name", "N/A").upper())
 
-    # Flight number (right side)
-    right_x = tx + 160 * mm
-    c.setFillColor(colors.HexColor("#666666"))
-    c.setFont("Helvetica", 8)
-    c.drawString(right_x, content_y, "FLIGHT / VOL")
-    c.setFillColor(colors.HexColor(BRAND_DARK))
-    c.setFont("Helvetica-Bold", 14)
-    flight_num = booking.get('flight_number', '')
-    airline = booking.get('airline', '')
-    c.drawString(right_x, content_y - 6 * mm, f"{airline} {flight_num}")
-
-    # Separator line
-    sep_y = content_y - 14 * mm
-    c.setStrokeColor(colors.HexColor("#E0E0E0"))
-    c.setLineWidth(0.5)
-    c.line(left_x, sep_y, tx + tw - 14 * mm, sep_y)
-
-    # FROM / TO section
-    row2_y = sep_y - 6 * mm
-    c.setFillColor(colors.HexColor("#666666"))
-    c.setFont("Helvetica", 8)
-    c.drawString(left_x, row2_y, "FROM / DE")
-    c.drawString(left_x + 80 * mm, row2_y, "TO / A")
-
-    origin = booking.get('origin', '')
-    dest = booking.get('destination', '')
-    c.setFillColor(colors.HexColor(BRAND_DARK))
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(left_x, row2_y - 6 * mm, f"{get_city_name(origin)} ({origin})")
-    c.drawString(left_x + 80 * mm, row2_y - 6 * mm, f"{get_city_name(dest)} ({dest})")
-
-    # Arrow between cities
+    right_x = tx + 180 * mm
+    c.setFillColor(colors.HexColor(BRAND_MUTED))
+    c.setFont("Helvetica", 7)
+    c.drawString(right_x, content_y, "REFERENCE")
     c.setFillColor(colors.HexColor(BRAND_VIOLET))
     c.setFont("Helvetica-Bold", 14)
-    c.drawString(left_x + 65 * mm, row2_y - 6 * mm, "->")
+    c.drawString(right_x, content_y - 5.5 * mm, booking_ref)
 
-    # DATE / TIME / CLASS / SEAT row
-    row3_y = row2_y - 18 * mm
-    labels = ["DATE", "TIME / HEURE", "CLASS / CLASSE", "SEAT / SIEGE"]
-    values = [
-        booking.get('departure_date', 'N/A'),
-        booking.get('departure_time', '').split('T')[1][:5] if 'T' in booking.get('departure_time', '') else 'N/A',
-        booking.get('category', 'ECO'),
-        "TBD"
-    ]
-    col_widths = [55 * mm, 40 * mm, 55 * mm, 40 * mm]
-    col_x = left_x
-    for i, (label, value) in enumerate(zip(labels, values)):
-        c.setFillColor(colors.HexColor("#666666"))
-        c.setFont("Helvetica", 8)
-        c.drawString(col_x, row3_y, label)
-        c.setFillColor(colors.HexColor(BRAND_DARK))
-        c.setFont("Helvetica-Bold", 11)
-        c.drawString(col_x, row3_y - 5 * mm, str(value))
-        col_x += col_widths[i]
+    # Dashed separator
+    sep_y = content_y - 11 * mm
+    c.setStrokeColor(colors.HexColor(BRAND_LINE))
+    c.setLineWidth(0.5)
+    c.setDash(2, 3)
+    c.line(left_x, sep_y, tx + tw - 14 * mm, sep_y)
+    c.setDash()
 
-    # Bottom separator
-    bot_sep_y = row3_y - 12 * mm
-    c.setStrokeColor(colors.HexColor("#E0E0E0"))
-    c.setDash(3, 3)
+    # --- OUTBOUND LEG ---
+    origin = booking.get("origin", "")
+    dest = booking.get("destination", "")
+    dep_time = _fmt_time(booking.get("departure_time", ""))
+    arr_time = _fmt_time(booking.get("arrival_time", ""))
+    duration = booking.get("duration_formatted", "") or ""
+    stops = booking.get("stops_text", "") or ""
+    airline = booking.get("airline", "")
+    flight_num = booking.get("flight_number", "")
+
+    leg_w = tw - 28 * mm
+    leg_y = sep_y - 5 * mm
+
+    # Outbound date label
+    c.setFillColor(colors.HexColor(BRAND_MUTED))
+    c.setFont("Helvetica", 7)
+    c.drawRightString(tx + tw - 14 * mm, leg_y, f"DEPART  {booking.get('departure_date', '')}")
+
+    bottom_out = _draw_leg(
+        c, left_x, leg_y, leg_w,
+        "ALLER  /  OUTBOUND",
+        airline, flight_num,
+        f"{get_city_name(origin)} ({origin})",
+        f"{get_city_name(dest)} ({dest})",
+        dep_time, arr_time, duration, stops,
+        colors, BRAND_DARK, BRAND_MUTED, BRAND_VIOLET,
+    )
+
+    # --- RETURN LEG (round-trip only) ---
+    if is_rt and return_leg:
+        # Small divider
+        c.setStrokeColor(colors.HexColor(BRAND_LINE))
+        c.setDash(2, 3)
+        c.line(left_x, bottom_out - 2 * mm, tx + tw - 14 * mm, bottom_out - 2 * mm)
+        c.setDash()
+
+        ret_dep = _fmt_time(return_leg.get("departure_time", ""))
+        ret_arr = _fmt_time(return_leg.get("arrival_time", ""))
+        ret_dur = return_leg.get("duration_formatted", "") or ""
+        ret_stops = return_leg.get("stops_text", "") or ""
+        ret_airline = return_leg.get("airline") or airline
+        ret_flight = return_leg.get("flight_number", "")
+        ret_date = (return_leg.get("departure_time", "").split("T")[0]
+                    if "T" in return_leg.get("departure_time", "") else "")
+
+        ret_y = bottom_out - 7 * mm
+        c.setFillColor(colors.HexColor(BRAND_MUTED))
+        c.setFont("Helvetica", 7)
+        c.drawRightString(tx + tw - 14 * mm, ret_y, f"RETOUR  {ret_date}")
+
+        bottom_out = _draw_leg(
+            c, left_x, ret_y, leg_w,
+            "RETOUR  /  RETURN",
+            ret_airline, ret_flight,
+            f"{get_city_name(dest)} ({dest})",
+            f"{get_city_name(origin)} ({origin})",
+            ret_dep, ret_arr, ret_dur, ret_stops,
+            colors, BRAND_DARK, BRAND_MUTED, BRAND_VIOLET,
+        )
+
+    # Bottom dashed separator
+    bot_sep_y = bottom_out - 4 * mm
+    c.setStrokeColor(colors.HexColor(BRAND_LINE))
+    c.setDash(2, 3)
     c.line(left_x, bot_sep_y, tx + tw - 14 * mm, bot_sep_y)
     c.setDash()
 
-    # Bottom row: Booking ref + QR code
+    # Bottom row: Passport | Class | Price | QR
     bot_y = bot_sep_y - 6 * mm
-    c.setFillColor(colors.HexColor("#666666"))
-    c.setFont("Helvetica", 8)
-    c.drawString(left_x, bot_y, "BOOKING REF / REFERENCE")
+
+    def _field(label: str, value: str, x_pos: float):
+        c.setFillColor(colors.HexColor(BRAND_MUTED))
+        c.setFont("Helvetica", 7)
+        c.drawString(x_pos, bot_y, label)
+        c.setFillColor(colors.HexColor(BRAND_DARK))
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(x_pos, bot_y - 6 * mm, value)
+
+    passport = booking.get("passenger_passport") or "N/A"
+    cat_raw = booking.get("category", "ECO")
+    cat_display = CATEGORY_LABEL.get(cat_raw, str(cat_raw).upper())
+
+    price_display = format_price_display(booking.get("price_eur", 0), booking.get("country_code", "BJ"))
+
+    _field("PASSEPORT / PASSPORT", passport, left_x)
+    _field("CLASSE / CLASS", cat_display, left_x + 70 * mm)
+    # Price — highlighted in violet
+    c.setFillColor(colors.HexColor(BRAND_MUTED))
+    c.setFont("Helvetica", 7)
+    c.drawString(left_x + 130 * mm, bot_y, "PRIX TOTAL / TOTAL PRICE")
     c.setFillColor(colors.HexColor(BRAND_VIOLET))
-    c.setFont("Helvetica-Bold", 16)
-    c.drawString(left_x, bot_y - 8 * mm, booking_ref)
+    c.setFont("Helvetica-Bold", 13)
+    c.drawString(left_x + 130 * mm, bot_y - 6 * mm, price_display)
 
-    # Passport
-    passport = booking.get('passenger_passport') or 'N/A'
-    c.setFillColor(colors.HexColor("#666666"))
-    c.setFont("Helvetica", 8)
-    c.drawString(left_x + 80 * mm, bot_y, "PASSPORT")
-    c.setFillColor(colors.HexColor(BRAND_DARK))
-    c.setFont("Helvetica-Bold", 11)
-    c.drawString(left_x + 80 * mm, bot_y - 8 * mm, passport)
-
-    # Price
-    price_eur = booking.get('price_eur', 0)
-    price_xof = booking.get('price_xof', 0)
-    c.setFillColor(colors.HexColor("#666666"))
-    c.setFont("Helvetica", 8)
-    c.drawString(left_x + 140 * mm, bot_y, "PRICE / PRIX")
-    c.setFillColor(colors.HexColor(BRAND_DARK))
-    c.setFont("Helvetica-Bold", 11)
-    c.drawString(left_x + 140 * mm, bot_y - 8 * mm, f"{price_eur}EUR")
-
-    # QR Code (right side)
-    from reportlab.lib.utils import ImageReader
+    # QR code (right)
     qr_reader = ImageReader(qr_buffer)
-    qr_size = 28 * mm
-    c.drawImage(qr_reader, tx + tw - 42 * mm, ty + 6 * mm, qr_size, qr_size)
+    qr_size = 24 * mm
+    c.drawImage(qr_reader, tx + tw - 32 * mm, ty + 6 * mm, qr_size, qr_size)
 
     # Footer
-    c.setFillColor(colors.HexColor("#999999"))
+    c.setFillColor(colors.HexColor(BRAND_MUTED))
     c.setFont("Helvetica", 7)
-    c.drawString(left_x, ty + 4 * mm, "Powered by Travelioo | +229 01 29 88 83 69 | travelioo.tech")
+    c.drawString(left_x, ty + 4 * mm,
+                 f"Powered by Travelioo  |  {SUPPORT_PHONE}  |  {SUPPORT_SITE}")
 
     c.save()
-    logger.info(f"[Ticket] Generated: {filename}")
+    logger.info(f"[Ticket] Generated: {filename}  (trip={booking.get('trip_type', 'one_way')})")
     return filename
