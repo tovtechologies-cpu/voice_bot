@@ -14,6 +14,14 @@ from database import db
 logger = logging.getLogger("CancellationHandler")
 
 
+def _cfa(eur_amount) -> str:
+    """Local helper: always render EUR amount as FCFA for user display."""
+    try:
+        return format_price_display(float(eur_amount or 0), "BJ")
+    except (TypeError, ValueError):
+        return "0 FCFA"
+
+
 async def start_cancellation_flow(phone: str, lang: str):
     bookings = await db.bookings.find({"phone": phone, "status": "confirmed"}, {"_id": 0}).sort("created_at", -1).limit(5).to_list(5)
     if not bookings:
@@ -102,46 +110,44 @@ This date has passed.
     elif refund_info["case"] == "partial_refund":
         refund = refund_info["refund_eur"]
         penalty = refund_info.get("airline_penalty", 0)
-        refund_xof = eur_to_xof(refund)
         if lang == "fr":
             msg = f"""*Remboursement avec penalite*
 
-Montant paye : {price}EUR
-- Penalite compagnie : -{penalty}EUR
-- Frais Travelioo : -{travelioo_fee}EUR (non remboursables)
+Montant paye : {_cfa(price)}
+- Penalite compagnie : -{_cfa(penalty)}
+- Frais Travelioo : -{_cfa(travelioo_fee)} (non remboursables)
 ---
-*Total rembourse : {refund}EUR* ({refund_xof:,} XOF)
+*Total rembourse : {_cfa(refund)}*
 
 Methode : {payment_display} ({masked})
 Delai : 5 a 10 jours ouvres
 
-1 Oui, annuler et rembourser {refund}EUR
+1 Oui, annuler et rembourser {_cfa(refund)}
 2 Non, conserver"""
         else:
             msg = f"""*Refund with penalty*
 
-Amount paid: {price}EUR
-- Airline penalty: -{penalty}EUR
-- Travelioo fee: -{travelioo_fee}EUR (non-refundable)
+Amount paid: {_cfa(price)}
+- Airline penalty: -{_cfa(penalty)}
+- Travelioo fee: -{_cfa(travelioo_fee)} (non-refundable)
 ---
-*Total refunded: {refund}EUR* ({refund_xof:,} XOF)
+*Total refunded: {_cfa(refund)}*
 
 Method: {payment_display} ({masked})
 Delay: 5 to 10 business days
 
-1 Yes, cancel and refund {refund}EUR
+1 Yes, cancel and refund {_cfa(refund)}
 2 No, keep it"""
 
     elif refund_info["case"] == "fully_refundable":
         refund = refund_info["refund_eur"]
-        refund_xof = eur_to_xof(refund)
         if lang == "fr":
             msg = f"""*Remboursement integral*
 
-Montant paye : {price}EUR
-- Frais Travelioo : -{travelioo_fee}EUR (non remboursables)
+Montant paye : {_cfa(price)}
+- Frais Travelioo : -{_cfa(travelioo_fee)} (non remboursables)
 ---
-*Total rembourse : {refund}EUR* ({refund_xof:,} XOF)
+*Total rembourse : {_cfa(refund)}*
 
 Methode : {payment_display} ({masked})
 Delai : 3 a 5 jours ouvres
@@ -150,10 +156,10 @@ Delai : 3 a 5 jours ouvres
         else:
             msg = f"""*Full refund*
 
-Amount paid: {price}EUR
-- Travelioo fee: -{travelioo_fee}EUR (non-refundable)
+Amount paid: {_cfa(price)}
+- Travelioo fee: -{_cfa(travelioo_fee)} (non-refundable)
 ---
-*Total refunded: {refund}EUR* ({refund_xof:,} XOF)
+*Total refunded: {_cfa(refund)}*
 
 Method: {payment_display} ({masked})
 Delay: 3 to 5 business days
@@ -201,14 +207,14 @@ async def handle_cancellation_confirm(phone: str, text: str, session: Dict, lang
             if lang == "fr":
                 msg = f"""*Annulation confirmee*
 {booking_ref} annulee
-{refund_amount}EUR rembourses -> {payment_display} ({masked})
+{_cfa(refund_amount)} rembourses -> {payment_display} ({masked})
 {ts} GMT+1
 Delai : 3 a 10 jours ouvres
 Votre billet a ete invalide."""
             else:
                 msg = f"""*Cancellation confirmed*
 {booking_ref} cancelled
-{refund_amount}EUR refunded -> {payment_display} ({masked})
+{_cfa(refund_amount)} refunded -> {payment_display} ({masked})
 Delay: 3 to 10 business days
 Your ticket has been invalidated."""
             await send_whatsapp_message(phone, msg)

@@ -2,7 +2,7 @@
 import logging
 from typing import Dict
 from datetime import datetime, timezone
-from models import ConversationState, calculate_refund
+from models import ConversationState, calculate_refund, format_price_display
 from services.session import update_session, clear_session
 from services.whatsapp import send_whatsapp_message
 from services.airport import get_city_name
@@ -10,6 +10,13 @@ from database import db
 from conversation.cancellation import start_cancellation_flow, process_refund
 
 logger = logging.getLogger("ModificationHandler")
+
+
+def _cfa(eur_amount) -> str:
+    try:
+        return format_price_display(float(eur_amount or 0), "BJ")
+    except (TypeError, ValueError):
+        return "0 FCFA"
 
 
 async def start_modification_flow(phone: str, lang: str):
@@ -65,24 +72,24 @@ async def handle_modification_requested(phone: str, text: str, session: Dict, la
     change_penalty = booking.get("change_penalty_eur", 0) or 0
     if lang == "fr":
         msg = f"""Billet modifiable.
-Penalite de modification : {change_penalty}EUR
+Penalite de modification : {_cfa(change_penalty)}
 
 Que souhaitez-vous modifier ?
 1 Date de depart
 2 Annuler plutot
 
 L'ancienne reservation sera annulee et une nouvelle sera creee.
-La penalite de {change_penalty}EUR sera appliquee."""
+La penalite de {_cfa(change_penalty)} sera appliquee."""
     else:
         msg = f"""Ticket modifiable.
-Modification penalty: {change_penalty}EUR
+Modification penalty: {_cfa(change_penalty)}
 
 What would you like to change?
 1 Departure date
 2 Cancel instead
 
 The original booking will be cancelled and a new one created.
-A penalty of {change_penalty}EUR will apply."""
+A penalty of {_cfa(change_penalty)} will apply."""
     await update_session(phone, {"state": ConversationState.MODIFICATION_CONFIRM, "_mod_booking_ref": booking_ref, "_mod_allowed": True, "_mod_penalty": change_penalty})
     await send_whatsapp_message(phone, msg)
 

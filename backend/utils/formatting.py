@@ -65,14 +65,17 @@ def format_flight_options_message(categorized: Dict, origin: str, destination: s
                     msg += f"  {ret_dep} -> {ret_arr} _({ret_dur} {ret_stops})_\n"
 
             # Price
-            from models import calculate_travelioo_fee
+            from models import calculate_travelioo_fee, format_price_display
+            from config import EUR_TO_XOF
             fee = calculate_travelioo_fee(f.get('base_price', price_eur))
+            price_display = format_price_display(price_eur, country)
+            fee_display = format_price_display(fee, country)
             if lang == "fr":
-                msg += f"\n  *Prix total : {price_eur}EUR* _({price_xof:,} XOF)_\n"
-                msg += f"  _(dont frais Travelioo : {fee}EUR)_\n\n"
+                msg += f"\n  *Prix total : {price_display}*\n"
+                msg += f"  _(dont frais Travelioo : {fee_display})_\n\n"
             else:
-                msg += f"\n  *Total price: {price_eur}EUR* _({price_xof:,} XOF)_\n"
-                msg += f"  _(incl. Travelioo fee: {fee}EUR)_\n\n"
+                msg += f"\n  *Total price: {price_display}*\n"
+                msg += f"  _(incl. Travelioo fee: {fee_display})_\n\n"
             option_num += 1
 
     msg += f"{SEP}\n\n"

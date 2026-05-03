@@ -57,12 +57,20 @@ def _auto_detect_keyboard(message: str) -> Optional[dict]:
 
     # Flight selection (prices + "selectionner" or "select")
     if ("selectionner" in msg_lower or "to select" in msg_lower):
-        prices = re.findall(r'(\d+)EUR', message)
+        # Match either "123,456 FCFA" (new format) or fall back to legacy "123EUR"
+        fcfa_prices = re.findall(r'([\d\s,.]+)\s*FCFA', message)
+        if not fcfa_prices:
+            # Legacy fallback: convert EUR to FCFA display on-the-fly
+            from config import EUR_TO_XOF
+            eur_prices = re.findall(r'(\d+(?:\.\d+)?)EUR', message)
+            fcfa_prices = [f"{int(round(float(p) * EUR_TO_XOF)):,}" for p in eur_prices]
         labels = ["LE PLUS BAS", "LE PLUS RAPIDE", "PREMIUM"]
         buttons = []
-        for i, price in enumerate(prices[:3]):
+        for i, price in enumerate(fcfa_prices[:3]):
             label = labels[i] if i < len(labels) else f"Option {i+1}"
-            buttons.append([{"text": f"{i+1}. {label} - {price}EUR", "data": f"flight_{i+1}"}])
+            # Clean the price string (strip extra whitespace/commas)
+            price_clean = price.strip().replace(" ", "")
+            buttons.append([{"text": f"{i+1}. {label} - {price_clean} FCFA", "data": f"flight_{i+1}"}])
         if buttons:
             buttons.append([{"text": "Nouvelle recherche", "data": "flight_new"}])
             return build_inline_keyboard(buttons)
