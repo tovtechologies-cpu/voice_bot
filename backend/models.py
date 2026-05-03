@@ -30,6 +30,8 @@ class ConversationState:
     AWAITING_ORIGIN = "awaiting_origin"
     AWAITING_DESTINATION = "awaiting_destination"
     AWAITING_DATE = "awaiting_date"
+    ASKING_TRIP_TYPE = "asking_trip_type"
+    AWAITING_RETURN_DATE = "awaiting_return_date"
     AWAITING_RETURN_FLIGHT = "awaiting_return_flight"
     AWAITING_FLIGHT_SELECTION = "awaiting_flight_selection"
     AWAITING_PAYMENT_METHOD = "awaiting_payment_method"

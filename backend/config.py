@@ -133,38 +133,83 @@ SADC_COUNTRIES = {"ZA", "BW", "MZ", "ZW", "ZM", "MW", "AO", "NA", "TZ", "CD"}
 TICKETS_DIR = ROOT_DIR / 'tickets'
 TICKETS_DIR.mkdir(exist_ok=True)
 
-# Extended airport codes database
+# Extended airport codes database.
+# NOTE: list each city->code once; Porto-Novo uses COO (same airport as Cotonou) but must not override the reverse mapping.
 AIRPORT_CODES = {
-    "dakar": "DSS", "lagos": "LOS", "accra": "ACC", "abidjan": "ABJ",
+    # West Africa
+    "cotonou": "COO", "porto-novo": "COO", "porto novo": "COO", "parakou": "PKO",
+    "lome": "LFW", "lomé": "LFW",
+    "dakar": "DSS", "abidjan": "ABJ", "accra": "ACC", "lagos": "LOS", "abuja": "ABV",
     "ouagadougou": "OUA", "bamako": "BKO", "conakry": "CKY", "niamey": "NIM",
-    "cotonou": "COO", "lome": "LFW", "paris": "CDG", "london": "LHR",
-    "casablanca": "CMN", "addis ababa": "ADD", "nairobi": "NBO", "dubai": "DXB",
-    "new york": "JFK", "douala": "DLA", "libreville": "LBV", "bruxelles": "BRU",
-    "brussels": "BRU", "istanbul": "IST", "rome": "FCO", "madrid": "MAD",
-    "amsterdam": "AMS", "lisbon": "LIS", "lisbonne": "LIS", "tunis": "TUN",
-    "alger": "ALG", "algiers": "ALG", "johannesburg": "JNB", "le caire": "CAI",
-    "cairo": "CAI", "marrakech": "RAK", "kinshasa": "FIH", "dakar": "DSS",
-    "abuja": "ABV", "dar es salaam": "DAR", "maputo": "MPM", "luanda": "LAD",
-    "yaounde": "NSI", "freetown": "FNA", "banjul": "BJL", "nouakchott": "NKC",
-    "porto-novo": "COO", "parakou": "PKO", "ndjamena": "NDJ", "tripoli": "TIP",
-    "antananarivo": "TNR", "kampala": "EBB", "kigali": "KGL", "lusaka": "LUN",
-    "harare": "HRE", "windhoek": "WDH", "gaborone": "GBE", "dakar": "DSS",
-    "marseille": "MRS", "lyon": "LYS", "nice": "NCE", "toulouse": "TLS",
-    "bordeaux": "BOD", "nantes": "NTE", "strasbourg": "SXB", "lille": "LIL",
-    "montreal": "YUL", "toronto": "YYZ", "washington": "IAD", "los angeles": "LAX",
-    "miami": "MIA", "chicago": "ORD", "atlanta": "ATL", "houston": "IAH",
-    "sao paulo": "GRU", "rio de janeiro": "GIG", "mexico": "MEX",
-    "doha": "DOH", "abu dhabi": "AUH", "riyadh": "RUH", "jeddah": "JED",
+    "nouakchott": "NKC", "banjul": "BJL", "freetown": "FNA",
+    # Central Africa
+    "douala": "DLA", "yaounde": "NSI", "libreville": "LBV", "kinshasa": "FIH",
+    "ndjamena": "NDJ",
+    # North Africa
+    "casablanca": "CMN", "marrakech": "RAK", "rabat": "RBA",
+    "tunis": "TUN", "alger": "ALG", "algiers": "ALG",
+    "tripoli": "TIP", "le caire": "CAI", "cairo": "CAI",
+    # East / South Africa
+    "addis ababa": "ADD", "nairobi": "NBO", "dar es salaam": "DAR",
+    "kampala": "EBB", "kigali": "KGL", "antananarivo": "TNR",
+    "johannesburg": "JNB", "luanda": "LAD", "maputo": "MPM", "lusaka": "LUN",
+    "harare": "HRE", "windhoek": "WDH", "gaborone": "GBE",
+    # Europe
+    "paris": "CDG", "marseille": "MRS", "lyon": "LYS", "nice": "NCE",
+    "toulouse": "TLS", "bordeaux": "BOD", "nantes": "NTE", "strasbourg": "SXB", "lille": "LIL",
+    "london": "LHR", "londres": "LHR",
+    "bruxelles": "BRU", "brussels": "BRU",
+    "amsterdam": "AMS", "madrid": "MAD", "barcelone": "BCN", "barcelona": "BCN",
+    "lisbon": "LIS", "lisbonne": "LIS",
+    "rome": "FCO", "milan": "MXP",
+    "berlin": "BER", "francfort": "FRA", "frankfurt": "FRA", "munich": "MUC",
+    "vienne": "VIE", "vienna": "VIE",
+    "geneve": "GVA", "geneva": "GVA", "zurich": "ZRH",
+    "istanbul": "IST",
+    # Middle East / Asia
+    "dubai": "DXB", "doha": "DOH", "abu dhabi": "AUH",
+    "riyadh": "RUH", "jeddah": "JED",
     "bangkok": "BKK", "singapore": "SIN", "singapour": "SIN",
     "tokyo": "NRT", "pekin": "PEK", "beijing": "PEK", "shanghai": "PVG",
     "mumbai": "BOM", "delhi": "DEL", "hong kong": "HKG",
+    # Americas
+    "new york": "JFK", "washington": "IAD", "los angeles": "LAX",
+    "miami": "MIA", "chicago": "ORD", "atlanta": "ATL", "houston": "IAH",
+    "montreal": "YUL", "toronto": "YYZ",
+    "sao paulo": "GRU", "rio de janeiro": "GIG", "mexico": "MEX",
+    # Oceania
     "sydney": "SYD", "melbourne": "MEL", "auckland": "AKL",
-    "londres": "LHR", "geneve": "GVA", "geneva": "GVA", "zurich": "ZRH",
-    "berlin": "BER", "francfort": "FRA", "frankfurt": "FRA",
-    "munich": "MUC", "vienne": "VIE", "vienna": "VIE", "milan": "MXP",
-    "barcelone": "BCN", "barcelona": "BCN",
 }
-CODE_TO_CITY = {v: k.title() for k, v in AIRPORT_CODES.items()}
+
+# Explicit primary-city display name per IATA code (prevents "Cotonou -> Porto-Novo" bug from alias order).
+CODE_TO_CITY = {
+    "COO": "Cotonou", "PKO": "Parakou", "LFW": "Lomé",
+    "DSS": "Dakar", "ABJ": "Abidjan", "ACC": "Accra", "LOS": "Lagos", "ABV": "Abuja",
+    "OUA": "Ouagadougou", "BKO": "Bamako", "CKY": "Conakry", "NIM": "Niamey",
+    "NKC": "Nouakchott", "BJL": "Banjul", "FNA": "Freetown",
+    "DLA": "Douala", "NSI": "Yaoundé", "LBV": "Libreville", "FIH": "Kinshasa", "NDJ": "N'Djamena",
+    "CMN": "Casablanca", "RAK": "Marrakech", "RBA": "Rabat",
+    "TUN": "Tunis", "ALG": "Alger", "TIP": "Tripoli", "CAI": "Le Caire",
+    "ADD": "Addis-Abeba", "NBO": "Nairobi", "DAR": "Dar es Salaam",
+    "EBB": "Kampala", "KGL": "Kigali", "TNR": "Antananarivo",
+    "JNB": "Johannesburg", "LAD": "Luanda", "MPM": "Maputo", "LUN": "Lusaka",
+    "HRE": "Harare", "WDH": "Windhoek", "GBE": "Gaborone",
+    "CDG": "Paris", "MRS": "Marseille", "LYS": "Lyon", "NCE": "Nice",
+    "TLS": "Toulouse", "BOD": "Bordeaux", "NTE": "Nantes", "SXB": "Strasbourg", "LIL": "Lille",
+    "LHR": "Londres", "BRU": "Bruxelles", "AMS": "Amsterdam", "MAD": "Madrid",
+    "BCN": "Barcelone", "LIS": "Lisbonne", "FCO": "Rome", "MXP": "Milan",
+    "BER": "Berlin", "FRA": "Francfort", "MUC": "Munich", "VIE": "Vienne",
+    "GVA": "Genève", "ZRH": "Zurich", "IST": "Istanbul",
+    "DXB": "Dubaï", "DOH": "Doha", "AUH": "Abu Dhabi", "RUH": "Riyadh", "JED": "Jeddah",
+    "BKK": "Bangkok", "SIN": "Singapour",
+    "NRT": "Tokyo", "PEK": "Pékin", "PVG": "Shanghai",
+    "BOM": "Mumbai", "DEL": "Delhi", "HKG": "Hong Kong",
+    "JFK": "New York", "IAD": "Washington", "LAX": "Los Angeles",
+    "MIA": "Miami", "ORD": "Chicago", "ATL": "Atlanta", "IAH": "Houston",
+    "YUL": "Montréal", "YYZ": "Toronto",
+    "GRU": "São Paulo", "GIG": "Rio de Janeiro", "MEX": "Mexico",
+    "SYD": "Sydney", "MEL": "Melbourne", "AKL": "Auckland",
+}
 
 AIRLINES = [
     ("Air France", "AF"), ("Ethiopian Airlines", "ET"),

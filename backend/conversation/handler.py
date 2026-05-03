@@ -19,7 +19,7 @@ from conversation.booking import (
     handle_awaiting_origin, handle_awaiting_destination, handle_awaiting_date,
     handle_awaiting_return_flight, handle_flight_selection,
     handle_payment_method, handle_pre_debit_confirm, handle_retry,
-    handle_payment_fasttrack
+    handle_payment_fasttrack, handle_asking_trip_type, handle_awaiting_return_date
 )
 from conversation.split_payment import (
     handle_split_payer_count, handle_split_collecting_numbers,
@@ -371,6 +371,12 @@ async def _handle_message_inner(phone: str, message_text: str, audio_id: str = N
         return
     if state == ConversationState.AWAITING_DATE:
         await handle_awaiting_date(phone, original_text, text, session, lang)
+        return
+    if state == ConversationState.ASKING_TRIP_TYPE:
+        await handle_asking_trip_type(phone, text, session, lang)
+        return
+    if state == ConversationState.AWAITING_RETURN_DATE:
+        await handle_awaiting_return_date(phone, original_text, text, session, lang)
         return
     if state == ConversationState.AWAITING_RETURN_FLIGHT:
         await handle_awaiting_return_flight(phone, text, session, lang)

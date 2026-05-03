@@ -150,6 +150,74 @@ async def handle_awaiting_date(phone: str, original_text: str, text: str, sessio
             await send_whatsapp_message(phone, msg)
             return
 
+    # If AI already parsed a return_date (e.g. "Paris aller-retour lundi"), go straight to search
+    if intent.get("return_date"):
+        await search_and_show_flights(phone, intent, lang)
+        return
+
+    # Ask the trip type EXPLICITLY so user always sees the round-trip option
+    if lang == "fr":
+        msg = "Quel type de vol souhaitez-vous ?\n\n*1* Aller simple\n*2* Aller-retour"
+    else:
+        msg = "What type of trip do you want?\n\n*1* One-way\n*2* Round-trip"
+    await update_session(phone, {"state": ConversationState.ASKING_TRIP_TYPE, "intent": intent})
+    await send_whatsapp_message(phone, msg)
+
+
+async def handle_asking_trip_type(phone: str, text: str, session: Dict, lang: str):
+    """Handle the one-way vs round-trip choice BEFORE flight search."""
+    intent = session.get("intent", {})
+    choice = text.strip().lower()
+
+    if choice in ["1", "aller", "aller simple", "simple", "oneway", "one-way", "one way"]:
+        await search_and_show_flights(phone, intent, lang)
+        return
+
+    if choice in ["2", "retour", "aller-retour", "aller retour", "round", "round-trip", "round trip", "roundtrip"]:
+        if lang == "fr":
+            msg = "Quelle est votre date de retour ?\n(ex: dans 5 jours, lundi prochain, 20 mai...)"
+        else:
+            msg = "What is your return date?\n(e.g.: in 5 days, next Monday, May 20...)"
+        await update_session(phone, {"state": ConversationState.AWAITING_RETURN_DATE, "intent": intent})
+        await send_whatsapp_message(phone, msg)
+        return
+
+    # Invalid input — re-ask
+    if lang == "fr":
+        msg = "Repondez *1* (aller simple) ou *2* (aller-retour)."
+    else:
+        msg = "Reply *1* (one-way) or *2* (round-trip)."
+    await send_whatsapp_message(phone, msg)
+
+
+async def handle_awaiting_return_date(phone: str, original_text: str, text: str, session: Dict, lang: str):
+    """Collect the return date for an explicit round-trip search."""
+    intent = session.get("intent", {})
+    parsed_return = parse_date(original_text, lang)
+    if not parsed_return:
+        parsed = await parse_travel_intent(f"retour {original_text}", lang)
+        parsed_return = parsed.get("return_date") or parsed.get("departure_date")
+
+    if not parsed_return:
+        if lang == "fr":
+            msg = "Je n'ai pas compris la date de retour. Essayez: dans 5 jours, lundi prochain, 20 mai..."
+        else:
+            msg = "I didn't understand the return date. Try: in 5 days, next Monday, May 20..."
+        await send_whatsapp_message(phone, msg)
+        return
+
+    # Safety: return date must be after departure date
+    dep = intent.get("departure_date")
+    if dep and parsed_return <= dep:
+        if lang == "fr":
+            msg = f"La date de retour doit etre apres le depart ({dep}). Donnez une date posterieure."
+        else:
+            msg = f"Return date must be after departure ({dep}). Please pick a later date."
+        await send_whatsapp_message(phone, msg)
+        return
+
+    intent["return_date"] = parsed_return
+    await update_session(phone, {"intent": intent})
     await search_and_show_flights(phone, intent, lang)
 
 
