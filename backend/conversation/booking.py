@@ -19,7 +19,7 @@ from utils.formatting import (
     format_payment_success, format_payment_failed,
     format_retry_options, format_booking_confirmed
 )
-from config import APP_BASE_URL
+from config import APP_BASE_URL, CODE_TO_CITY
 from database import db
 
 logger = logging.getLogger("BookingHandler")
@@ -73,13 +73,16 @@ async def handle_awaiting_origin(phone: str, original_text: str, session: Dict, 
 
 async def handle_awaiting_destination(phone: str, original_text: str, session: Dict, lang: str):
     intent = session.get("intent", {})
+    # Preserve user's previously-chosen origin — never let the AI/fallback overwrite it.
+    user_origin = intent.get("origin")
     parsed = await parse_travel_intent(original_text, lang)
 
     if parsed.get("destination"):
         # Try resolve via airport service (fuzzy matching)
         dest_code = resolve_airport(parsed["destination"]) or parsed["destination"]
         intent["destination"] = dest_code
-        if parsed.get("origin"):
+        # Only apply parsed origin if the user hasn't set one yet (first-message shortcut)
+        if parsed.get("origin") and not user_origin:
             intent["origin"] = resolve_airport(parsed["origin"]) or parsed.get("origin")
         if parsed.get("departure_date"):
             intent["departure_date"] = parsed["departure_date"]
@@ -309,9 +312,12 @@ async def _proceed_to_payment(phone: str, session: Dict, lang: str):
 
 
 async def search_and_show_flights(phone: str, intent: Dict, lang: str):
-    origin = intent.get("origin", "COO")
-    if origin != "COO" and len(origin) != 3:
+    origin = intent.get("origin") or "COO"
+    # Trust the code if it's already a valid 3-letter IATA we know; else try fuzzy resolve.
+    if len(origin) != 3 or origin.upper() not in CODE_TO_CITY:
         origin = resolve_airport(origin) or "COO"
+    else:
+        origin = origin.upper()
     destination = resolve_airport(intent["destination"]) or intent["destination"].upper()[:3]
     date = intent["departure_date"]
     return_date = intent.get("return_date")
