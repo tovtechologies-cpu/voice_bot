@@ -96,19 +96,21 @@ def apply_travelioo_pricing(gds_price_eur: float) -> dict:
 
 
 def format_price_display(eur_amount: float, country_code: str = "BJ") -> str:
-    """Localized price display — EUR always first, local currency in parentheses."""
+    """Localized price display — XOF only for CFA countries (per product requirement)."""
     from config import CFA_COUNTRIES, EUR_TO_XOF
     if country_code in CFA_COUNTRIES:
         xof = round(eur_amount * EUR_TO_XOF)
-        return f"{eur_amount:.0f}EUR ({xof:,} XOF)"
+        return f"{xof:,} FCFA"
     elif country_code == "MA":
         mad = round(eur_amount * 10.9)
-        return f"{eur_amount:.0f}EUR ({mad:,} MAD)"
+        return f"{mad:,} MAD"
     elif country_code == "NG":
         ngn = round(eur_amount * 1650)
-        return f"{eur_amount:.0f}EUR ({ngn:,} NGN)"
+        return f"{ngn:,} NGN"
     else:
-        return f"{eur_amount:.0f}EUR"
+        # Default to FCFA for African market focus
+        xof = round(eur_amount * EUR_TO_XOF)
+        return f"{xof:,} FCFA"
 
 
 # ---------------------------------------------------------------------------
@@ -132,8 +134,8 @@ MOCK_FARE_PROFILES = [
         "change_allowed": True,
         "change_penalty_eur": 50.0,
         "refund_deadline_hours_before": 48,
-        "conditions_raw": "Remboursable avec penalite de 80EUR. Modifiable avec frais de 50EUR. Annulation et modification possibles jusqu'a 48h avant le depart.",
-        "conditions_summary": "- Remboursable : Oui avec penalite de 80EUR\n- Modifiable : Oui avec frais de 50EUR\n- Delai : Annulation/modification 48h avant le depart"
+        "conditions_raw": "Remboursable avec penalite de 52 000 FCFA. Modifiable avec frais de 33 000 FCFA. Annulation et modification possibles jusqu'a 48h avant le depart.",
+        "conditions_summary": "- Remboursable : Oui avec penalite de 52 000 FCFA\n- Modifiable : Oui avec frais de 33 000 FCFA\n- Delai : Annulation/modification 48h avant le depart"
     },
     {
         "name": "Flex",

@@ -279,7 +279,7 @@ async def search_and_show_flights(phone: str, intent: Dict, lang: str):
     # Voice summary for flight results
     from conversation.handler import send_voice_if_needed
     best = flights_with_cat[0] if flights_with_cat else {}
-    voice_text = f"J'ai trouve {len(flights_with_cat)} vols. Le plus bas est a {best.get('final_price', 0)} euros. Repondez 1, 2 ou 3 pour choisir."
+    voice_text = f"J'ai trouve {len(flights_with_cat)} vols. Le plus bas est a {eur_to_xof(best.get('final_price', 0)):,} francs CFA. Repondez 1, 2 ou 3 pour choisir."
     await send_voice_if_needed(phone, voice_text)
 
 

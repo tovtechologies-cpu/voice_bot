@@ -2,9 +2,10 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# System dependencies: ffmpeg for audio, image libs for Pillow/OCR
+# System dependencies: ffmpeg for audio, image libs for Pillow/OCR, tesseract for passport OCR
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc libffi-dev libssl-dev libjpeg-dev zlib1g-dev ffmpeg \
+    tesseract-ocr tesseract-ocr-fra tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy and install Python dependencies
