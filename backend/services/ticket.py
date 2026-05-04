@@ -119,6 +119,53 @@ def _draw_leg(c, colors, left_x: float, leg_y: float, leg_w: float,
     return row_y - 4 * mm  # bottom of this leg block
 
 
+def _draw_gradient_rect(c, colors, x: float, y: float, w: float, h: float,
+                        color_left: str, color_right: str, steps: int = 60):
+    """Draw a horizontal gradient rect by interpolating between two hex colors."""
+    def _hex_to_rgb(h):
+        h = h.lstrip("#")
+        return tuple(int(h[i:i+2], 16) / 255.0 for i in (0, 2, 4))
+    r1, g1, b1 = _hex_to_rgb(color_left)
+    r2, g2, b2 = _hex_to_rgb(color_right)
+    step_w = w / steps
+    for i in range(steps):
+        t = i / (steps - 1)
+        r = r1 + (r2 - r1) * t
+        g = g1 + (g2 - g1) * t
+        b = b1 + (b2 - b1) * t
+        c.setFillColorRGB(r, g, b)
+        c.rect(x + i * step_w, y, step_w + 0.5, h, stroke=0, fill=1)
+
+
+def _draw_watermark(c, colors, tx: float, ty: float, tw: float, th: float, mm: float):
+    """Ghost-render the TRAVELIOO logomark at very low opacity, rotated, tiled
+    across the ticket so it reads as a subtle background texture."""
+    c.saveState()
+    try:
+        c.setFillAlpha(0.06)
+    except Exception:
+        # Older reportlab may not support setFillAlpha — silently skip
+        c.restoreState()
+        return
+    c.setFillColor(colors.HexColor(BRAND_VIOLET))
+    c.setFont("Helvetica-Bold", 42)
+    # Tile diagonally
+    step_x = 90 * mm
+    step_y = 28 * mm
+    rows = max(3, int(th / step_y) + 2)
+    cols = max(3, int(tw / step_x) + 2)
+    for row in range(rows):
+        for col in range(cols):
+            cx = tx + col * step_x - 10 * mm + (row % 2) * (step_x / 2)
+            cy = ty + row * step_y
+            c.saveState()
+            c.translate(cx, cy)
+            c.rotate(-18)
+            c.drawString(0, 0, "TRAVELIOO")
+            c.restoreState()
+    c.restoreState()
+
+
 def generate_ticket_pdf(booking: Dict) -> str:
     from reportlab.lib import colors
     from reportlab.lib.units import mm
@@ -171,11 +218,21 @@ def generate_ticket_pdf(booking: Dict) -> str:
     c.setLineWidth(1)
     c.roundRect(tx, ty, tw, th, 5 * mm, fill=1, stroke=1)
 
-    # Header bar
+    # Clip watermark + gradient to the rounded card area
+    c.saveState()
+    card_path = c.beginPath()
+    card_path.roundRect(tx, ty, tw, th, 5 * mm)
+    c.clipPath(card_path, stroke=0, fill=0)
+
+    # Faint diagonal "TRAVELIOO" watermark across the full card
+    _draw_watermark(c, colors, tx, ty, tw, th, mm)
+
+    # Header bar — violet → dark gradient
     header_h = 16 * mm
-    c.setFillColor(colors.HexColor(BRAND_DARK))
-    c.roundRect(tx, ty + th - header_h, tw, header_h, 5 * mm, fill=1, stroke=0)
-    c.rect(tx, ty + th - header_h, tw, 5 * mm, fill=1, stroke=0)
+    header_y = ty + th - header_h
+    _draw_gradient_rect(c, colors, tx, header_y, tw, header_h, BRAND_VIOLET, BRAND_DARK)
+
+    c.restoreState()
 
     # Brand wordmark
     c.setFillColor(colors.HexColor(BRAND_WHITE))
