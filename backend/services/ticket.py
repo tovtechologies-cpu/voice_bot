@@ -4,6 +4,8 @@ import logging
 from typing import Dict
 from config import TICKETS_DIR
 from services.airport import get_city_name
+from services.country import COUNTRY_PAYMENT_METHODS
+from payment_drivers.router import get_driver, list_supported_countries
 from models import format_price_display
 
 logger = logging.getLogger("TicketService")
@@ -28,6 +30,29 @@ CATEGORY_LABEL = {
     "fastest": "EXPRESS",
     "premium": "PREMIUM",
 }
+
+
+def _resolve_payment_context(booking: Dict, lang: str = "fr") -> tuple[str, str]:
+    """Return (operator_display_name, country_name) for the payment driver used.
+    Falls back to ('Travelioo', '') if driver or country can't be resolved."""
+    driver_id = booking.get("payment_driver") or booking.get("payment_method") or ""
+    drv = get_driver(driver_id)
+    display = drv.display_name if drv else driver_id.replace("_", " ").title() or "Travelioo"
+
+    # Reverse lookup operator id -> country code
+    op_country = None
+    for cc, ops in COUNTRY_PAYMENT_METHODS.items():
+        if any(op["id"] == driver_id for op in ops):
+            op_country = cc
+            break
+
+    country_name = ""
+    if op_country:
+        names = {c["code"]: c["name"] for c in list_supported_countries(lang)}
+        country_name = names.get(op_country, op_country)
+    elif driver_id in ("stripe", "paypal", "card_visa"):
+        country_name = "International"
+    return display, country_name
 
 
 def _fmt_time(iso_str: str) -> str:
@@ -114,9 +139,9 @@ def generate_ticket_pdf(booking: Dict) -> str:
     w, h = landscape(A4)
     c = canvas.Canvas(filepath, pagesize=landscape(A4))
 
-    # Ticket dims — taller if round-trip
+    # Ticket dims — add 10mm for the payment badge row
     tw = 260 * mm
-    th = 155 * mm if is_rt else 130 * mm
+    th = (155 * mm if is_rt else 130 * mm) + 10 * mm
     tx = (w - tw) / 2
     ty = (h - th) / 2
 
@@ -273,15 +298,30 @@ def generate_ticket_pdf(booking: Dict) -> str:
     c.setFont("Helvetica-Bold", 13)
     c.drawString(left_x + 130 * mm, bot_y - 6 * mm, price_display)
 
+    # Payment badge — "Payé via X — Country — Amount" — sits above the footer
+    pay_display, pay_country = _resolve_payment_context(booking, lang="fr")
+    badge_parts = [f"Paye via {pay_display}"]
+    if pay_country:
+        badge_parts.append(pay_country)
+    badge_parts.append(price_display)
+    badge_text = "   -   ".join(badge_parts)
+
+    badge_y = ty + 10 * mm
+    c.setFillColor(colors.HexColor(BRAND_VIOLET))
+    c.roundRect(left_x, badge_y - 1 * mm, tw - 46 * mm, 5.5 * mm, 1.5 * mm, fill=1, stroke=0)
+    c.setFillColor(colors.HexColor(BRAND_WHITE))
+    c.setFont("Helvetica-Bold", 8)
+    c.drawString(left_x + 3 * mm, badge_y + 0.8 * mm, badge_text)
+
     # QR code (right)
     qr_reader = ImageReader(qr_buffer)
     qr_size = 24 * mm
     c.drawImage(qr_reader, tx + tw - 32 * mm, ty + 6 * mm, qr_size, qr_size)
 
-    # Footer
+    # Footer (below the payment badge)
     c.setFillColor(colors.HexColor(BRAND_MUTED))
     c.setFont("Helvetica", 7)
-    c.drawString(left_x, ty + 4 * mm,
+    c.drawString(left_x, ty + 3 * mm,
                  f"Powered by Travelioo  |  {SUPPORT_PHONE}  |  {SUPPORT_SITE}")
 
     c.save()
