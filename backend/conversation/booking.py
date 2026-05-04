@@ -873,8 +873,13 @@ async def execute_payment(phone: str, session: Dict, lang: str):
         await update_session(phone, {"state": ConversationState.AWAITING_PAYMENT_METHOD})
         return
 
-    # Use new payment driver architecture
-    is_mobile = driver_name in ["celtiis_cash", "mtn_momo", "moov_money"]
+    # Use new payment driver architecture.
+    # Detect driver TYPE (not hardcoded names) so the 124 mock operators from the
+    # country map + paypal + card_visa all correctly route through the mobile-money
+    # flow. Only the real Stripe driver should go through the card branch.
+    from payment_drivers.stripe_driver import StripeDriver
+    is_card = isinstance(driver, StripeDriver)
+    is_mobile = not is_card
     currency = "XOF" if is_mobile else "EUR"
     amount = eur_to_xof(total_eur) if is_mobile else total_eur
 
