@@ -35,6 +35,7 @@ class ConversationState:
     AWAITING_RETURN_FLIGHT = "awaiting_return_flight"
     AWAITING_FLIGHT_SELECTION = "awaiting_flight_selection"
     AWAITING_PAYMENT_METHOD = "awaiting_payment_method"
+    AWAITING_COUNTRY_SWITCH = "awaiting_country_switch"
     AWAITING_PAYMENT_CONFIRM = "awaiting_payment_confirm"
     AWAITING_PAYMENT_CONFIRMATION = "awaiting_payment_confirmation"
     AWAITING_MOBILE_PAYMENT = "awaiting_mobile_payment"

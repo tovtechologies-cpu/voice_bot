@@ -666,7 +666,7 @@ async def handle_payment_method(phone: str, text: str, session: Dict, lang: str)
         # Show only mobile money options for split (card doesn't support split)
         from payment_drivers.router import get_payment_menu_for_country
         menu = get_payment_menu_for_country(country, lang)
-        mobile_options = [m for m in menu if m["driver_name"] in ["celtiis_cash", "mtn_momo", "moov_money"]]
+        mobile_options = [m for m in menu if m.get("group") == "mobile_money"]
         if not mobile_options:
             msg = "Le paiement divise n'est disponible qu'avec le mobile money." if lang == "fr" else "Split payment is only available with mobile money."
             await send_whatsapp_message(phone, msg)
@@ -702,10 +702,15 @@ async def handle_payment_method(phone: str, text: str, session: Dict, lang: str)
     # Also accept text names
     if not driver_name:
         text_lower = text.lower()
-        name_map = {"celtiis": "celtiis_cash", "mtn": "mtn_momo", "momo": "mtn_momo",
-                     "moov": "moov_money", "flooz": "moov_money",
-                     "google": "stripe", "gpay": "stripe", "apple": "stripe", "apay": "stripe",
-                     "carte": "stripe", "card": "stripe", "stripe": "stripe"}
+        name_map = {
+            "celtiis": "celtiis_cash", "mtn": "mtn_momo", "momo": "mtn_momo",
+            "moov": "moov_money", "flooz": "moov_money",
+            "google": "stripe", "gpay": "stripe", "apple": "stripe", "apay": "stripe",
+            "carte": "card_visa", "card": "card_visa", "visa": "card_visa",
+            "stripe": "stripe", "paypal": "paypal",
+            "autre": "__other_country__", "other": "__other_country__",
+            "autre pays": "__other_country__", "other country": "__other_country__",
+        }
         driver_name = name_map.get(text_lower)
         if driver_name and driver_name not in payment_menu:
             driver_name = None
@@ -713,6 +718,24 @@ async def handle_payment_method(phone: str, text: str, session: Dict, lang: str)
     if not driver_name:
         max_opt = len(payment_menu)
         msg = f"Repondez 1 a {max_opt}" if lang == "fr" else f"Reply 1 to {max_opt}"
+        await send_whatsapp_message(phone, msg)
+        return
+
+    # ── "Other country mobile money" sub-flow ──
+    if driver_name == "__other_country__":
+        from payment_drivers.router import list_supported_countries
+        countries = list_supported_countries(lang)
+        if lang == "fr":
+            msg = "*Choisissez votre pays*\nTapez le numero du pays :\n\n"
+        else:
+            msg = "*Choose your country*\nReply with the country number:\n\n"
+        for i, c in enumerate(countries, 1):
+            msg += f"*{i}* {c['name']} ({c['count']})\n"
+        msg += ("\n*0* Retour" if lang == "fr" else "\n*0* Back")
+        await update_session(phone, {
+            "state": ConversationState.AWAITING_COUNTRY_SWITCH,
+            "_country_list": [c["code"] for c in countries],
+        })
         await send_whatsapp_message(phone, msg)
         return
 
@@ -1017,6 +1040,73 @@ async def poll_and_complete_payment_v2(phone: str, booking_id: str, booking_ref:
         msg = "Timeout.\n1 Resend notification\n2 Change payment method\n3 Cancel booking"
     await send_whatsapp_message(phone, msg)
     await update_session(phone, {"state": "retry"})
+
+
+async def handle_country_switch(phone: str, text: str, session: Dict, lang: str):
+    """Sub-flow: user picked '__other_country__' and now picks the target country.
+    On selection we rebuild the payment menu for that country and re-enter AWAITING_PAYMENT_METHOD."""
+    country_codes = session.get("_country_list") or []
+    text_clean = text.strip().lower()
+
+    # Allow back-out
+    if text_clean in ["0", "retour", "back", "annuler", "cancel"]:
+        from payment_drivers.router import get_payment_menu_for_country
+        country = session.get("_country_code", "BJ")
+        menu = get_payment_menu_for_country(country, lang)
+        title = "*Choisissez votre moyen de paiement*\n\n" if lang == "fr" else "*Choose your payment method*\n\n"
+        msg = title + "\n".join(f"{m['index']} {m['label']}" for m in menu)
+        await update_session(phone, {
+            "state": ConversationState.AWAITING_PAYMENT_METHOD,
+            "_payment_menu": [m["driver_name"] for m in menu],
+            "_country_list": None,
+        })
+        await send_whatsapp_message(phone, msg)
+        return
+
+    chosen_code = None
+    try:
+        idx = int(text_clean) - 1
+        if 0 <= idx < len(country_codes):
+            chosen_code = country_codes[idx]
+    except (ValueError, TypeError):
+        pass
+
+    # Free-text country name / ISO code
+    if not chosen_code:
+        from payment_drivers.router import list_supported_countries
+        all_countries = list_supported_countries(lang)
+        for c in all_countries:
+            if text_clean == c["code"].lower() or text_clean == c["name"].lower():
+                chosen_code = c["code"]
+                break
+
+    if not chosen_code:
+        msg = ("Choix invalide. Tapez le numero du pays ou *0* pour retour."
+               if lang == "fr"
+               else "Invalid choice. Reply with the country number or *0* for back.")
+        await send_whatsapp_message(phone, msg)
+        return
+
+    # Rebuild menu for the chosen country (the user's session country stays the
+    # same — they just want to pay through an operator from another country).
+    from payment_drivers.router import get_payment_menu_for_country, list_supported_countries
+    menu = get_payment_menu_for_country(chosen_code, lang)
+    country_name = next(
+        (c["name"] for c in list_supported_countries(lang) if c["code"] == chosen_code),
+        chosen_code,
+    )
+
+    title = (f"*Methodes mobile money — {country_name}*\n\n"
+             if lang == "fr"
+             else f"*Mobile money methods — {country_name}*\n\n")
+    msg = title + "\n".join(f"{m['index']} {m['label']}" for m in menu)
+
+    await update_session(phone, {
+        "state": ConversationState.AWAITING_PAYMENT_METHOD,
+        "_payment_menu": [m["driver_name"] for m in menu],
+        "_country_list": None,
+    })
+    await send_whatsapp_message(phone, msg)
 
 
 async def complete_card_payment(booking_id: str, stripe_intent_id: str):

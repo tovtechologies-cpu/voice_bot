@@ -19,7 +19,8 @@ from conversation.booking import (
     handle_awaiting_origin, handle_awaiting_destination, handle_awaiting_date,
     handle_awaiting_return_flight, handle_flight_selection,
     handle_payment_method, handle_pre_debit_confirm, handle_retry,
-    handle_payment_fasttrack, handle_asking_trip_type, handle_awaiting_return_date
+    handle_payment_fasttrack, handle_asking_trip_type, handle_awaiting_return_date,
+    handle_country_switch
 )
 from conversation.split_payment import (
     handle_split_payer_count, handle_split_collecting_numbers,
@@ -133,6 +134,17 @@ async def _handle_message_inner(phone: str, message_text: str, audio_id: str = N
         await update_session(phone, {"language": detected_lang, "_source_lang": detect_language(original_text) if original_text else detected_lang})
         from services.shadow_profile import update_shadow_profile
         await update_shadow_profile(phone, {"language_pref": detected_lang})
+
+    # ── COUNTRY DETECTION (set once per session) ──
+    # Used by the country-aware payment flow. Source priority:
+    #   1) Already saved on session
+    #   2) Phone dial code (WhatsApp / Telegram)
+    #   3) BJ default (also for webchat — frontend may send country override)
+    if not session.get("_country_code"):
+        from services.country import country_from_phone
+        cc = country_from_phone(phone)
+        await update_session(phone, {"_country_code": cc})
+        session["_country_code"] = cc
 
     # ── LANGUAGE CHANGE COMMAND ──
     if text in ["langue", "language", "idioma", "لغة", "cambiar idioma", "change language", "/langue", "/language"]:
@@ -389,6 +401,9 @@ async def _handle_message_inner(phone: str, message_text: str, audio_id: str = N
         return
     if state == ConversationState.AWAITING_PAYMENT_METHOD:
         await handle_payment_method(phone, text, session, lang)
+        return
+    if state == ConversationState.AWAITING_COUNTRY_SWITCH:
+        await handle_country_switch(phone, text, session, lang)
         return
     if state == ConversationState.AWAITING_PAYMENT_CONFIRM:
         await handle_pre_debit_confirm(phone, text, session, lang)

@@ -48,6 +48,18 @@ async def webchat_message(request: Request):
         phone = f"+web{session_id}"
         set_channel(phone, "webchat")
 
+        # Optional country override from frontend (e.g. inferred from browser locale or geoIP).
+        # Use upsert so it lands even if this is the first message and the session doesn't exist yet.
+        country_override = (body.get("country_code") or body.get("country") or "").strip().upper()
+        if country_override and len(country_override) == 2:
+            from datetime import datetime, timezone
+            await db.sessions.update_one(
+                {"phone": phone},
+                {"$set": {"_country_code": country_override,
+                          "last_activity": datetime.now(timezone.utc).isoformat()}},
+                upsert=True,
+            )
+
         if not message:
             logger.warning(
                 f"[Webchat] EMPTY MESSAGE | session_id={session_id} | "
