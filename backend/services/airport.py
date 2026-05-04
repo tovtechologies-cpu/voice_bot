@@ -10,18 +10,31 @@ logger = logging.getLogger("AirportService")
 _CITY_LIST = list(AIRPORT_CODES.keys())
 _CODE_LIST = list(CODE_TO_CITY.keys())
 
+# Cities users type but which have NO airport — never fuzzy-match these to a distant city.
+# These get rejected with a clear error from the handler (user will be asked to restate).
+_NO_AIRPORT_CITIES = {
+    "porto-novo", "porto novo",   # Bénin — vol depuis Cotonou (COO)
+}
+
 
 def resolve_airport(query: str) -> Optional[str]:
     """5-step destination resolution:
-    1. Exact match in local DB
-    2. IATA code direct match
-    3. Fuzzy match (rapidfuzz, score >= 70)
-    4. Partial/contains match
-    5. Return None (caller should ask Claude or user)
+    1. Reject known no-airport cities
+    2. Exact match in local DB
+    3. IATA code direct match
+    4. Fuzzy match (rapidfuzz, score >= 70)
+    5. Partial/contains match
+    6. Return None (caller should ask Claude or user)
     """
     if not query:
         return None
     query_clean = query.strip().lower()
+
+    # Step 0: Reject cities known to have no airport (prevents dangerous fuzzy matches
+    # like "porto-novo" -> "Porto" in Portugal)
+    if query_clean in _NO_AIRPORT_CITIES:
+        logger.info(f"Airport not available for '{query}' (known no-airport city)")
+        return None
 
     # Step 1: Exact match
     if query_clean in AIRPORT_CODES:
