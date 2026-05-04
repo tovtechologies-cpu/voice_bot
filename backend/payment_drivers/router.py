@@ -157,6 +157,36 @@ def get_payment_menu_for_country(country_code: str, lang: str = "fr") -> list:
     return menu
 
 
+def format_detected_country_line(country_code: str, lang: str = "fr") -> str:
+    """Friendly one-liner shown at the top of the payment menu.
+    Example: '_Pays detecte : 🇸🇳 Sénégal (+221) — vos options locales_'"""
+    from services.country import get_country_dial_code, country_flag
+    cc = (country_code or "").upper()
+    names = {c["code"]: c["name"] for c in list_supported_countries(lang)}
+    # Fallback country names for diaspora markets (not in mobile-money map)
+    DIASPORA_NAMES_FR = {"FR": "France", "BE": "Belgique", "CH": "Suisse", "GB": "Royaume-Uni",
+                         "DE": "Allemagne", "ES": "Espagne", "IT": "Italie", "PT": "Portugal",
+                         "NL": "Pays-Bas", "IE": "Irlande", "LU": "Luxembourg", "AT": "Autriche",
+                         "US": "États-Unis", "CA": "Canada", "AE": "Émirats Arabes Unis",
+                         "QA": "Qatar", "SA": "Arabie Saoudite", "KW": "Koweït", "CN": "Chine",
+                         "IN": "Inde", "JP": "Japon", "KR": "Corée du Sud", "SG": "Singapour"}
+    DIASPORA_NAMES_EN = {"FR": "France", "BE": "Belgium", "CH": "Switzerland", "GB": "United Kingdom",
+                         "DE": "Germany", "ES": "Spain", "IT": "Italy", "PT": "Portugal",
+                         "NL": "Netherlands", "IE": "Ireland", "LU": "Luxembourg", "AT": "Austria",
+                         "US": "United States", "CA": "Canada", "AE": "UAE",
+                         "QA": "Qatar", "SA": "Saudi Arabia", "KW": "Kuwait", "CN": "China",
+                         "IN": "India", "JP": "Japan", "KR": "South Korea", "SG": "Singapore"}
+    fallback = DIASPORA_NAMES_FR if lang == "fr" else DIASPORA_NAMES_EN
+    name = names.get(cc) or fallback.get(cc, cc)
+    flag = country_flag(cc)
+    dial = get_country_dial_code(cc)
+    dial_str = f" (+{dial})" if dial else ""
+    flag_prefix = f"{flag} " if flag else ""
+    if lang == "fr":
+        return f"_Pays detecte : {flag_prefix}{name}{dial_str} — voici vos options locales_"
+    return f"_Detected country: {flag_prefix}{name}{dial_str} — your local options_"
+
+
 def list_supported_countries(lang: str = "fr") -> list:
     """Return list of {code, name, count} for countries with mobile money support.
     Used by the 'other country' selector."""

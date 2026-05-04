@@ -324,3 +324,25 @@ def country_from_phone(phone: str) -> str:
 def get_country_currency(country_code: str) -> str:
     """Return the local currency for a country (default XOF)."""
     return COUNTRY_CURRENCY.get((country_code or "").upper(), "XOF")
+
+
+# Build reverse dial-code map once (country -> primary dial code, shortest first).
+_COUNTRY_TO_DIAL: dict[str, str] = {}
+for _dial, _cc in PHONE_DIAL_TO_COUNTRY.items():
+    if _cc not in _COUNTRY_TO_DIAL or len(_dial) < len(_COUNTRY_TO_DIAL[_cc]):
+        _COUNTRY_TO_DIAL[_cc] = _dial
+
+
+def get_country_dial_code(country_code: str) -> str:
+    """Return primary international dial code for a country (without '+'), or '' if unknown."""
+    return _COUNTRY_TO_DIAL.get((country_code or "").upper(), "")
+
+
+# Country flag emoji per ISO code — used in the "Pays detecté" header.
+# Build dynamically: each ISO letter maps to its regional indicator symbol.
+def country_flag(country_code: str) -> str:
+    """Return flag emoji for ISO-2 country code, or empty string if invalid."""
+    cc = (country_code or "").upper()
+    if len(cc) != 2 or not cc.isalpha():
+        return ""
+    return "".join(chr(0x1F1E6 + ord(c) - ord("A")) for c in cc)

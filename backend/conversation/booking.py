@@ -508,13 +508,17 @@ async def handle_flight_selection(phone: str, text: str, session: Dict, lang: st
     # No preferred method — show full payment menu
     price_display = format_price_display(pricing["total_eur"], country)
     fee_display = format_price_display(pricing["travelioo_fee_eur"], country)
+    from payment_drivers.router import format_detected_country_line
+    header = format_detected_country_line(country, lang)
     if lang == "fr":
         msg = "*Choisissez votre moyen de paiement*\n"
+        msg += f"{header}\n"
         msg += f"Prix vol : {format_price_display(pricing['gds_price_eur'], country)}\n"
         msg += f"Frais Travelioo : {fee_display}\n"
         msg += f"*Total : {price_display}*\n\n"
     else:
         msg = "*Choose your payment method*\n"
+        msg += f"{header}\n"
         msg += f"Flight price: {format_price_display(pricing['gds_price_eur'], country)}\n"
         msg += f"Travelioo fee: {fee_display}\n"
         msg += f"*Total: {price_display}*\n\n"
@@ -612,9 +616,10 @@ Travelioo fee: {fee_display} (non-refundable)
         # Decline fast-track — show full payment menu
         country = session.get("_country_code", "BJ")
         pricing = session.get("_pricing", {})
-        from payment_drivers.router import get_payment_menu_for_country
+        from payment_drivers.router import get_payment_menu_for_country, format_detected_country_line
         from models import format_price_display
         menu = get_payment_menu_for_country(country, lang)
+        header = format_detected_country_line(country, lang)
         total_eur = pricing.get("total_eur", selected.get("final_price", 0))
         price_display = format_price_display(total_eur, country)
         fee_display = format_price_display(pricing.get("travelioo_fee_eur", 0), country)
@@ -622,11 +627,13 @@ Travelioo fee: {fee_display} (non-refundable)
 
         if lang == "fr":
             msg = "*Choisissez votre moyen de paiement*\n"
+            msg += f"{header}\n"
             msg += f"Prix vol : {gds_display}\n"
             msg += f"Frais Travelioo : {fee_display}\n"
             msg += f"*Total : {price_display}*\n\n"
         else:
             msg = "*Choose your payment method*\n"
+            msg += f"{header}\n"
             msg += f"Flight price: {gds_display}\n"
             msg += f"Travelioo fee: {fee_display}\n"
             msg += f"*Total: {price_display}*\n\n"
@@ -1050,11 +1057,12 @@ async def handle_country_switch(phone: str, text: str, session: Dict, lang: str)
 
     # Allow back-out
     if text_clean in ["0", "retour", "back", "annuler", "cancel"]:
-        from payment_drivers.router import get_payment_menu_for_country
+        from payment_drivers.router import get_payment_menu_for_country, format_detected_country_line
         country = session.get("_country_code", "BJ")
         menu = get_payment_menu_for_country(country, lang)
-        title = "*Choisissez votre moyen de paiement*\n\n" if lang == "fr" else "*Choose your payment method*\n\n"
-        msg = title + "\n".join(f"{m['index']} {m['label']}" for m in menu)
+        header = format_detected_country_line(country, lang)
+        title = ("*Choisissez votre moyen de paiement*\n" if lang == "fr" else "*Choose your payment method*\n")
+        msg = f"{title}{header}\n\n" + "\n".join(f"{m['index']} {m['label']}" for m in menu)
         await update_session(phone, {
             "state": ConversationState.AWAITING_PAYMENT_METHOD,
             "_payment_menu": [m["driver_name"] for m in menu],
