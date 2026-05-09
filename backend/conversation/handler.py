@@ -55,16 +55,20 @@ async def handle_message(phone: str, message_text: str, audio_id: str = None, im
             logger.error(f"[HANDLER] Fallback send also failed: {fallback_err}")
         return
 
-    # Send TTS voice response if user originally sent voice
+    # Send TTS voice response if user originally sent voice and no voice was sent yet
     if user_sent_voice:
-        try:
-            from services.whatsapp import get_last_response_for
-            last_response = get_last_response_for(phone)
-            if last_response:
-                await send_voice_if_needed(phone, last_response, force=True)
-        except Exception as e:
-            logger.error(f"[TTS] Voice response failed: {type(e).__name__}: {e}")
-            # Fail silently — text was already sent
+        session = await get_or_create_session(phone)
+        if not session.get("_voice_response_sent", False):
+            try:
+                from services.whatsapp import get_last_response_for
+                last_response = get_last_response_for(phone)
+                if last_response:
+                    await send_voice_if_needed(phone, last_response, force=True)
+            except Exception as e:
+                logger.error(f"[TTS] Voice response failed: {type(e).__name__}: {e}")
+        else:
+            # Reset the flag for the next turn
+            await update_session(phone, {"_voice_response_sent": False})
 
 
 async def _handle_message_inner(phone: str, message_text: str, audio_id: str = None, image_id: str = None):
@@ -513,7 +517,7 @@ async def send_voice_if_needed(phone: str, text: str, force: bool = False):
             from services.telegram import send_telegram_voice_bytes
             await send_telegram_voice_bytes(phone, audio_bytes)
 
-        # Reset voice flag
-        await update_session(phone, {"_last_input_was_voice": False})
+        # Set flag so we don't send a redundant one in the post-hook
+        await update_session(phone, {"_last_input_was_voice": False, "_voice_response_sent": True})
     except Exception as e:
         logger.error(f"[Voice] TTS send error: {e}")

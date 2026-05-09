@@ -15,14 +15,14 @@ def format_flight_options_message(categorized: Dict, origin: str, destination: s
 
     if lang == "fr":
         if is_rt:
-            msg = f"*Vols aller-retour trouves*\n_{origin_city} -> {dest_city} -> {origin_city}_\n_Aller : {date} | Retour : {return_date}_\n\n"
+            msg = f"✨ *Vols aller-retour trouvés*\n_{origin_city} ✈️ {dest_city} ✈️ {origin_city}_\n_Aller : {date} | Retour : {return_date}_\n\n"
         else:
-            msg = f"*{count} vols trouves pour vous*\n_{origin_city} -> {dest_city} | {date}_\n\n"
+            msg = f"✨ *{count} vols trouvés pour vous*\n_{origin_city} ✈️ {dest_city} | {date}_\n\n"
     else:
         if is_rt:
-            msg = f"*Round-trip flights found*\n_{origin_city} -> {dest_city} -> {origin_city}_\n_Out: {date} | Return: {return_date}_\n\n"
+            msg = f"✨ *Round-trip flights found*\n_{origin_city} ✈️ {dest_city} ✈️ {origin_city}_\n_Out: {date} | Return: {return_date}_\n\n"
         else:
-            msg = f"*{count} flights found for you*\n_{origin_city} -> {dest_city} | {date}_\n\n"
+            msg = f"✨ *{count} flights found for you*\n_{origin_city} ✈️ {dest_city} | {date}_\n\n"
 
     labels_fr = {"PLUS_BAS": "LE PLUS BAS", "PLUS_RAPIDE": "LE PLUS RAPIDE", "PREMIUM": "PREMIUM"}
     labels_en = {"PLUS_BAS": "CHEAPEST", "PLUS_RAPIDE": "FASTEST", "PREMIUM": "PREMIUM"}
@@ -92,15 +92,15 @@ def format_payment_menu(menu: List[Dict], pricing: Dict, country: str, lang: str
     fee_display = format_price_display(fee_eur, country)
 
     if lang == "fr":
-        msg = f"*Choisissez votre mode de paiement*\n\n"
-        msg += f"Prix vol : {gds_display}\n"
-        msg += f"Frais Travelioo : {fee_display}\n"
-        msg += f"*Total : {total_display}*\n\n"
+        msg = f"💳 *Choisissez votre mode de paiement*\n\n"
+        msg += f"🎫 Prix vol : {gds_display}\n"
+        msg += f"⚙️ Frais Travelioo : {fee_display}\n"
+        msg += f"💰 *Total : {total_display}*\n\n"
     else:
-        msg = f"*Choose your payment method*\n\n"
-        msg += f"Flight price: {gds_display}\n"
-        msg += f"Travelioo fee: {fee_display}\n"
-        msg += f"*Total: {total_display}*\n\n"
+        msg = f"💳 *Choose your payment method*\n\n"
+        msg += f"🎫 Flight price: {gds_display}\n"
+        msg += f"⚙️ Travelioo fee: {fee_display}\n"
+        msg += f"💰 *Total: {total_display}*\n\n"
 
     driver_icons = {
         "celtiis_cash": "  ",
@@ -129,33 +129,33 @@ def format_payment_confirm(selected: Dict, passenger_name: str, driver_name: str
     dep_date = selected.get('departure_time', '').split('T')[0]
 
     if lang == "fr":
-        msg = f"*Recapitulatif de votre paiement*\n\n"
-        msg += f"Vol : {selected['origin']} -> {selected['destination']}\n"
-        msg += f"Depart : {dep_date}\n"
-        msg += f"Passager : {passenger_name}\n"
-        msg += f"Classe : {selected.get('category', 'Economy')}\n"
-        msg += f"Methode : {driver_name}\n\n"
-        msg += f"*Conditions du billet :*\n{fare_summary}\n\n"
-        msg += f"Prix vol : {gds_display}\n"
-        msg += f"Frais Travelioo : {fee_display} _(non remboursables)_\n"
-        msg += f"*Total : {total_display}*\n\n"
-        msg += "*1* Oui, envoyer la notification de paiement\n"
-        msg += "*2* Non, annuler\n"
-        msg += "*3* Voir les conditions completes"
+        msg = f"📝 *Récapitulatif de votre paiement*\n\n"
+        msg += f"✈️ Vol : {selected['origin']} ➡️ {selected['destination']}\n"
+        msg += f"📅 Départ : {dep_date}\n"
+        msg += f"👤 Passager : {passenger_name}\n"
+        msg += f"💺 Classe : {selected.get('category', 'Economy')}\n"
+        msg += f"💳 Méthode : {driver_name}\n\n"
+        msg += f"ℹ️ *Conditions du billet :*\n{fare_summary}\n\n"
+        msg += f"🎫 Prix vol : {gds_display}\n"
+        msg += f"⚙️ Frais Travelioo : {fee_display} _(non remboursables)_\n"
+        msg += f"💰 *Total : {total_display}*\n\n"
+        msg += "✅ *1* Oui, envoyer la notification\n"
+        msg += "❌ *2* Non, annuler\n"
+        msg += "📋 *3* Voir les conditions complètes"
     else:
-        msg = f"*Payment Summary*\n\n"
-        msg += f"Flight: {selected['origin']} -> {selected['destination']}\n"
-        msg += f"Departure: {dep_date}\n"
-        msg += f"Passenger: {passenger_name}\n"
-        msg += f"Class: {selected.get('category', 'Economy')}\n"
-        msg += f"Method: {driver_name}\n\n"
-        msg += f"*Ticket conditions:*\n{fare_summary}\n\n"
-        msg += f"Flight price: {gds_display}\n"
-        msg += f"Travelioo fee: {fee_display} _(non-refundable)_\n"
-        msg += f"*Total: {total_display}*\n\n"
-        msg += "*1* Yes, send payment notification\n"
-        msg += "*2* No, cancel\n"
-        msg += "*3* View full conditions"
+        msg = f"📝 *Payment Summary*\n\n"
+        msg += f"✈️ Flight: {selected['origin']} ➡️ {selected['destination']}\n"
+        msg += f"📅 Departure: {dep_date}\n"
+        msg += f"👤 Passenger: {passenger_name}\n"
+        msg += f"💺 Class: {selected.get('category', 'Economy')}\n"
+        msg += f"💳 Method: {driver_name}\n\n"
+        msg += f"ℹ️ *Ticket conditions:*\n{fare_summary}\n\n"
+        msg += f"🎫 Flight price: {gds_display}\n"
+        msg += f"⚙️ Travelioo fee: {fee_display} _(non-refundable)_\n"
+        msg += f"💰 *Total: {total_display}*\n\n"
+        msg += "✅ *1* Yes, send notification\n"
+        msg += "❌ *2* No, cancel\n"
+        msg += "📋 *3* View full conditions"
     return msg
 
 

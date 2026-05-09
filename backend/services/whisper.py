@@ -11,10 +11,11 @@ from services.whatsapp import download_whatsapp_media
 logger = logging.getLogger("WhisperService")
 
 WHISPER_PROMPT = (
-    "Tu es un expert en langues beninoises et africaines. "
-    "Extrais les donnees de voyage: villes, destinations, dates, prix. "
-    "Langues: Francais, Fon, Yoruba, Anglais, Hausa. "
-    "Paris, Cotonou, Dakar, Abidjan sont toujours des destinations de voyage."
+    "Tu es un expert en langues béninoises et africaines. "
+    "Extrais les données de voyage : villes, destinations, dates, prix. "
+    "Langues : Français, Fon, Yoruba, Anglais, Hausa, Wolof, Swahili. "
+    "Compagnies : Air France, Ethiopian Airlines, Royal Air Maroc, Brussels Airlines, Turkish Airlines, Kenya Airways, ASKY, Air Côte d'Ivoire. "
+    "Destinations fréquentes : Cotonou, Paris, Dakar, Abidjan, Lomé, Bamako, Niamey, Ouagadougou, Lagos, Accra, Casablanca, Douala, Libreville, Brazzaville, Kinshasa."
 )
 
 

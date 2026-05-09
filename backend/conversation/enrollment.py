@@ -97,21 +97,24 @@ async def handle_enrollment_method_selection(phone: str, text: str, session: Dic
 async def handle_manual_first_name(phone: str, text: str, session: Dict, lang: str, is_tp: bool):
     name = text.strip()
     if not validate_name(name):
-        msg = "Nom invalide. Utilisez uniquement des lettres, espaces ou tirets. (minimum 2 caracteres)" if lang == "fr" else "Invalid name. Use only letters, spaces, or hyphens. (minimum 2 characters)"
+        msg = "⚠️ Nom invalide. Utilisez uniquement des lettres, espaces ou tirets. (minimum 2 caractères)" if lang == "fr" else "⚠️ Invalid name. Use only letters, spaces, or hyphens. (minimum 2 characters)"
         await send_whatsapp_message(phone, msg)
         return
     enrollment = session.get("enrollment_data", {})
     enrollment["firstName"] = title_case_name(name)
     ln_state = ConversationState.ENROLLING_TP_MANUAL_LN if is_tp else ConversationState.ENROLLING_MANUAL_LN
     await update_session(phone, {"state": ln_state, "enrollment_data": enrollment})
-    msg = "Quel est votre nom de famille ?" if lang == "fr" else "What is your last name?"
+    msg = "Quel est votre nom de famille ? 👤" if lang == "fr" else "What is your last name? 👤"
     await send_whatsapp_message(phone, msg)
+    # Add voice for better flow
+    from conversation.handler import send_voice_if_needed
+    await send_voice_if_needed(phone, f"Enchanté {enrollment['firstName']} ! Quel est votre nom de famille ?" if lang == "fr" else f"Nice to meet you {enrollment['firstName']}! What is your last name?")
 
 
 async def handle_manual_last_name(phone: str, text: str, session: Dict, lang: str, is_tp: bool):
     name = text.strip()
     if not validate_name(name):
-        msg = "Nom invalide. Utilisez uniquement des lettres, espaces ou tirets." if lang == "fr" else "Invalid name. Use only letters, spaces, or hyphens."
+        msg = "⚠️ Nom invalide. Utilisez uniquement des lettres, espaces ou tirets." if lang == "fr" else "⚠️ Invalid name. Use only letters, spaces, or hyphens."
         await send_whatsapp_message(phone, msg)
         return
     enrollment = session.get("enrollment_data", {})
