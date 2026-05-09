@@ -57,12 +57,43 @@ class TTSService:
 
     def _clean_for_speech(self, text: str) -> str:
         """Remove markdown/formatting for natural speech."""
+        # Remove markdown
         clean = re.sub(r'\*+', '', text)
         clean = re.sub(r'_+', '', clean)
         clean = re.sub(r'`+', '', clean)
+
+        # Handle flight specific symbols
+        clean = clean.replace("->", " vers ")
+
+        # Expand common IATA codes for natural speech
+        iata_map = {
+            r'\bCOO\b': 'Cotonou',
+            r'\bCDG\b': 'Paris',
+            r'\bDSS\b': 'Dakar',
+            r'\bABJ\b': 'Abidjan',
+            r'\bACC\b': 'Accra',
+            r'\bLOS\b': 'Lagos',
+            r'\bLFW\b': 'Lomé',
+            r'\bOUA\b': 'Ouagadougou',
+            r'\bBKO\b': 'Bamako',
+            r'\bNIM\b': 'Niamey',
+            r'\bORY\b': 'Paris Orly',
+            r'\bLHR\b': 'Londres',
+        }
+        for code, city in iata_map.items():
+            clean = re.sub(code, city, clean)
+
+        # Handle currencies (handle cases like 100EUR without space)
+        clean = re.sub(r'(\d)EUR\b', r'\1 euros', clean)
+        clean = re.sub(r'\bEUR\b', ' euros ', clean)
+        clean = re.sub(r'(\d)XOF\b', r'\1 francs CFA', clean)
+        clean = re.sub(r'\bXOF\b', ' francs CFA ', clean)
+
+        # Clean up whitespace and newlines
         clean = re.sub(r'[━─]+', '. ', clean)
         clean = re.sub(r'\n+', '. ', clean)
         clean = re.sub(r'\s+', ' ', clean)
+
         return clean.strip()
 
 

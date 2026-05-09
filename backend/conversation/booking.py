@@ -65,9 +65,9 @@ async def handle_awaiting_origin(phone: str, original_text: str, session: Dict, 
     origin_name = get_city_name(intent["origin"])
     await update_session(phone, {"state": ConversationState.AWAITING_DESTINATION, "intent": intent})
     if lang == "fr":
-        msg = f"Depart : *{origin_name}* ({intent['origin']})\n\nOu souhaitez-vous aller ?\n_Exemple : Paris, Dakar, Dubai, CDG..._"
+        msg = f"📍 Départ : *{origin_name}* ({intent['origin']})\n\nOù souhaitez-vous aller ? 🛫\n_Exemple : Paris, Dakar, Dubai, CDG..._"
     else:
-        msg = f"Departing from: *{origin_name}* ({intent['origin']})\n\nWhere would you like to go?\n_Example: Paris, Dakar, Dubai, CDG..._"
+        msg = f"📍 Departing from: *{origin_name}* ({intent['origin']})\n\nWhere would you like to go? 🛫\n_Example: Paris, Dakar, Dubai, CDG..._"
     await send_whatsapp_message(phone, msg)
 
 
@@ -123,9 +123,9 @@ async def handle_awaiting_destination(phone: str, original_text: str, session: D
     if not intent.get("departure_date"):
         # Show date options with dateparser hint
         if lang == "fr":
-            msg = "Quelle est votre date de depart ?\n(ex: demain, vendredi prochain, 15 mars...)"
+            msg = "Quelle est votre date de départ ? 📅\n(ex: demain, vendredi prochain, 15 mars...)"
         else:
-            msg = "When do you want to depart?\n(e.g.: tomorrow, next Friday, March 15...)"
+            msg = "When do you want to depart? 📅\n(e.g.: tomorrow, next Friday, March 15...)"
         await update_session(phone, {"state": ConversationState.AWAITING_DATE, "intent": intent})
         await send_whatsapp_message(phone, msg)
         return
@@ -160,9 +160,9 @@ async def handle_awaiting_date(phone: str, original_text: str, text: str, sessio
 
     # Ask the trip type EXPLICITLY so user always sees the round-trip option
     if lang == "fr":
-        msg = "Quel type de vol souhaitez-vous ?\n\n*1* Aller simple\n*2* Aller-retour"
+        msg = "Quel type de vol souhaitez-vous ? ✈️\n\n*1* ➡️ Aller simple\n*2* 🔄 Aller-retour"
     else:
-        msg = "What type of trip do you want?\n\n*1* One-way\n*2* Round-trip"
+        msg = "What type of trip do you want? ✈️\n\n*1* ➡️ One-way\n*2* 🔄 Round-trip"
     await update_session(phone, {"state": ConversationState.ASKING_TRIP_TYPE, "intent": intent})
     await send_whatsapp_message(phone, msg)
 
@@ -178,9 +178,9 @@ async def handle_asking_trip_type(phone: str, text: str, session: Dict, lang: st
 
     if choice in ["2", "retour", "aller-retour", "aller retour", "round", "round-trip", "round trip", "roundtrip"]:
         if lang == "fr":
-            msg = "Quelle est votre date de retour ?\n(ex: dans 5 jours, lundi prochain, 20 mai...)"
+            msg = "Quelle est votre date de retour ? 📅\n(ex: dans 5 jours, lundi prochain, 20 mai...)"
         else:
-            msg = "What is your return date?\n(e.g.: in 5 days, next Monday, May 20...)"
+            msg = "What is your return date? 📅\n(e.g.: in 5 days, next Monday, May 20...)"
         await update_session(phone, {"state": ConversationState.AWAITING_RETURN_DATE, "intent": intent})
         await send_whatsapp_message(phone, msg)
         return
@@ -325,9 +325,14 @@ async def search_and_show_flights(phone: str, intent: Dict, lang: str):
 
     if return_date:
         msg = f"Recherche aller-retour {get_city_name(origin)} -> {get_city_name(destination)}..." if lang == "fr" else f"Searching round-trip {get_city_name(origin)} -> {get_city_name(destination)}..."
+        voice_msg = f"Je recherche vos vols aller-retour pour {get_city_name(destination)}, un instant s'il vous plaît." if lang == "fr" else f"Searching for your round-trip flights to {get_city_name(destination)}, one moment please."
     else:
         msg = f"Recherche de vols {get_city_name(origin)} -> {get_city_name(destination)}..." if lang == "fr" else f"Searching flights {get_city_name(origin)} -> {get_city_name(destination)}..."
+        voice_msg = f"Je recherche vos vols pour {get_city_name(destination)}, un instant s'il vous plaît." if lang == "fr" else f"Searching for your flights to {get_city_name(destination)}, one moment please."
+
     await send_whatsapp_message(phone, msg)
+    from conversation.handler import send_voice_if_needed
+    await send_voice_if_needed(phone, voice_msg)
 
     flights = await search_flights(origin, destination, date, passengers, return_date)
 
