@@ -70,41 +70,40 @@ def _resolve_payment_context(booking: Dict, lang: str = "fr") -> tuple[str, str]
     return display, country_name
 
 
-def _draw_logo(c, colors, x: float, y: float, mm: float, scale: float = 1.0):
-    """Draw the Travelioo logomark (paper plane in violet circle) + wordmark.
+def _draw_logo(c, colors, x: float, y: float, mm: float, scale: float = 1.4):
+    """Draw the Travelioo logomark (paper plane in violet rounded square) + wordmark.
     Vector-only, no asset file needed. Origin point = top-left corner of the logo."""
     s = scale
-    # Violet rounded square 12mm × 12mm
-    box = 12 * mm * s
+    # Violet rounded square
+    box = 13 * mm * s
     c.setFillColor(colors.HexColor(BRAND_VIOLET))
-    c.roundRect(x, y - box, box, box, 2.5 * mm * s, fill=1, stroke=0)
+    c.roundRect(x, y - box, box, box, 3 * mm * s, fill=1, stroke=0)
 
     # Paper-plane glyph (white) — drawn as a polygon
     cx = x + box / 2
     cy = y - box / 2
     p = c.beginPath()
-    # Triangle points: tip-right, fold-mid, tail-bottom-left, tail-top-left
-    pl = 4.2 * mm * s
-    p.moveTo(cx + pl, cy)                 # tip
+    pl = 5 * mm * s
+    p.moveTo(cx + pl, cy)                  # tip
     p.lineTo(cx - pl * 0.7, cy + pl * 0.6) # top tail
     p.lineTo(cx - pl * 0.2, cy)            # mid fold
     p.lineTo(cx - pl * 0.7, cy - pl * 0.6) # bottom tail
     p.close()
     c.setFillColor(colors.HexColor(BRAND_WHITE))
     c.drawPath(p, fill=1, stroke=0)
-    # Inner fold line (thin dark line)
+    # Inner fold line
     c.setStrokeColor(colors.HexColor(BRAND_VIOLET))
-    c.setLineWidth(0.6)
+    c.setLineWidth(0.7)
     c.line(cx - pl * 0.7, cy + pl * 0.6, cx - pl * 0.2, cy)
     c.line(cx - pl * 0.2, cy, cx + pl, cy)
 
-    # Wordmark to the right of the logomark
+    # Wordmark — bigger and bolder
     c.setFillColor(colors.HexColor(BRAND_DARK))
-    c.setFont("Helvetica-Bold", 16 * s)
-    c.drawString(x + box + 3 * mm * s, y - 7 * mm * s, "TRAVELIOO")
+    c.setFont("Helvetica-Bold", 22 * s / 1.4)
+    c.drawString(x + box + 4 * mm * s, y - 8 * mm * s, "TRAVELIOO")
     c.setFillColor(colors.HexColor(BRAND_VIOLET))
-    c.setFont("Helvetica-Oblique", 8 * s)
-    c.drawString(x + box + 3 * mm * s, y - 11 * mm * s, "Speak'n Go")
+    c.setFont("Helvetica-Oblique", 10 * s / 1.4)
+    c.drawString(x + box + 4 * mm * s, y - 13 * mm * s, "Speak'n Go")
 
 
 def _draw_section_title(c, colors, x: float, y: float, mm: float,
@@ -140,18 +139,11 @@ def generate_ticket_pdf(booking: Dict) -> str:
     is_rt = booking.get("trip_type") == "round_trip" or bool(booking.get("return_leg"))
     return_leg = booking.get("return_leg") or {}
 
-    # Build QR
-    route_str = f"{booking.get('origin')}-{booking.get('destination')}"
-    if is_rt:
-        route_str += f"-{booking.get('origin')}"
-    qr_payload = json.dumps({
-        "ref": booking_ref,
-        "pax": booking.get("passenger_name", ""),
-        "route": route_str,
-        "trip": "RT" if is_rt else "OW",
-    })
+    # Build QR — encodes a verification URL so the QR becomes a shareable trust signal
+    # (forward to family / employer / embassy). Reads booking ref + route + trip type.
+    verify_url = f"https://{SUPPORT_SITE}/v/{booking_ref}"
     qr = qrcode.QRCode(version=1, box_size=10, border=1)
-    qr.add_data(qr_payload)
+    qr.add_data(verify_url)
     qr.make(fit=True)
     qr_img = qr.make_image(fill_color=BRAND_DARK, back_color="white")
     qr_buffer = BytesIO()
@@ -165,24 +157,24 @@ def generate_ticket_pdf(booking: Dict) -> str:
     margin_top = 18 * mm
 
     # ── HEADER ──
-    # Logo top-left
-    _draw_logo(c, colors, margin_x, page_h - margin_top, mm, scale=1.0)
+    # Logo top-left — bigger and more prominent (scale 1.4)
+    _draw_logo(c, colors, margin_x, page_h - margin_top, mm, scale=1.4)
 
-    # Title block top-right
+    # Title block top-right — aligned to logo center
     title_x = page_w - margin_x
     c.setFillColor(colors.HexColor(BRAND_DARK))
     c.setFont("Helvetica-Bold", 14)
-    c.drawRightString(title_x, page_h - margin_top - 1 * mm, "BILLET ELECTRONIQUE")
+    c.drawRightString(title_x, page_h - margin_top - 3 * mm, "BILLET ELECTRONIQUE")
     c.setFillColor(colors.HexColor(BRAND_MUTED))
     c.setFont("Helvetica-Oblique", 9)
-    c.drawRightString(title_x, page_h - margin_top - 6 * mm, "ELECTRONIC TICKET")
+    c.drawRightString(title_x, page_h - margin_top - 8 * mm, "ELECTRONIC TICKET")
     c.setFillColor(colors.HexColor(BRAND_VIOLET))
     c.setFont("Helvetica-Bold", 8)
     badge = "ALLER-RETOUR" if is_rt else "ALLER SIMPLE"
-    c.drawRightString(title_x, page_h - margin_top - 11 * mm, badge)
+    c.drawRightString(title_x, page_h - margin_top - 14 * mm, badge)
 
-    # ── BOOKING REFERENCE BAND ──
-    band_y = page_h - margin_top - 22 * mm
+    # Push the rest of the layout down to make room for the bigger logo
+    band_y = page_h - margin_top - 26 * mm
     band_h = 18 * mm
     c.setFillColor(colors.HexColor(BRAND_BG_SOFT))
     c.rect(margin_x, band_y, page_w - 2 * margin_x, band_h, fill=1, stroke=0)
@@ -234,17 +226,21 @@ def generate_ticket_pdf(booking: Dict) -> str:
     c.setFont("Helvetica-Bold", 9)
     c.drawString(margin_x + 60 * mm, pax_y - 16 * mm, ticket_number)
 
-    # QR code on the right
-    qr_size = 28 * mm
+    # QR code on the right — bigger + verification URL caption
+    qr_size = 30 * mm
     qr_x = page_w - margin_x - qr_size
-    qr_y = pax_y - 22 * mm
+    qr_y = pax_y - 24 * mm
     c.drawImage(ImageReader(qr_buffer), qr_x, qr_y, qr_size, qr_size)
     c.setFillColor(colors.HexColor(BRAND_DARK))
     c.setFont("Helvetica-Bold", 8)
-    c.drawCentredString(qr_x + qr_size / 2, qr_y - 3 * mm, "GAGNEZ DU TEMPS")
+    c.drawCentredString(qr_x + qr_size / 2, qr_y - 3.5 * mm, "SCAN POUR VERIFIER")
     c.setFillColor(colors.HexColor(BRAND_MUTED))
     c.setFont("Helvetica-Oblique", 7)
-    c.drawCentredString(qr_x + qr_size / 2, qr_y - 6 * mm, "Save time")
+    c.drawCentredString(qr_x + qr_size / 2, qr_y - 6.5 * mm, "Scan to verify booking")
+    c.setFillColor(colors.HexColor(BRAND_VIOLET))
+    c.setFont("Helvetica", 6.5)
+    c.drawCentredString(qr_x + qr_size / 2, qr_y - 9.5 * mm,
+                        f"{SUPPORT_SITE}/v/{booking_ref}")
 
     # ── ITINERARY ──
     iti_y = pax_y - 32 * mm
