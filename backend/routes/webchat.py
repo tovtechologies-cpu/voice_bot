@@ -46,6 +46,48 @@ async def webchat_message(request: Request):
         message = message.strip() if isinstance(message, str) else ""
 
         phone = f"+web{session_id}"
+
+        # Handle Audio Input from Webchat
+        message_type = body.get("type")
+        audio_data = body.get("audio") or body.get("audio_base64")
+        mime_type = body.get("mime_type") or body.get("mimeType")
+
+        if message_type == "audio" and audio_data:
+            try:
+                import base64 as b64mod
+                audio_bytes = b64mod.b64decode(audio_data)
+
+                # Get conversation context for Gemini
+                session_ctx = await db.sessions.find_one(
+                    {"phone": phone}, {"_id": 0}
+                )
+                context = f"État: {session_ctx.get('state','NEW')}" if session_ctx else "État: NEW"
+
+                # Use Gemini Live for transcription
+                from services.gemini_live_service import gemini_live_service
+                gemini_result = await gemini_live_service.transcribe_and_respond(
+                    audio_bytes,
+                    mime_type or "audio/webm",
+                    context
+                )
+
+                transcription = gemini_result["transcription"]
+
+                if transcription:
+                    message = transcription
+                    logger.info(
+                        f"[Webchat Gemini] Transcribed: '{transcription[:80]}'"
+                    )
+                else:
+                    # Fallback to Whisper
+                    from services.whisper_service import whisper_service
+                    message = await whisper_service.transcribe(
+                        audio_bytes, "webm"
+                    )
+
+            except Exception as e:
+                logger.error(f"[Webchat Audio] Error: {e}")
+                message = ""
         set_channel(phone, "webchat")
 
         # Optional country override from frontend (e.g. inferred from browser locale or geoIP).

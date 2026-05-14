@@ -30,17 +30,44 @@ class TTSService:
             logger.info(f"[TTS] Disabled (enabled={self.enabled}, key={'set' if self.api_key else 'missing'})")
 
     async def synthesize(self, text: str) -> bytes:
-        """Convert text to speech MP3 bytes using OpenAI TTS."""
-        if not self.enabled or not self.client:
+        """Convert text to speech MP3 bytes using Gemini or OpenAI TTS."""
+        if not self.enabled:
             return b""
+
         clean = self._clean_for_speech(text)
         if not clean.strip() or len(clean) < 5:
             return b""
+
         # Limit length to avoid excessive API costs
         if len(clean) > 500:
             clean = clean[:500]
+
+        # Try Gemini Live TTS first (better quality)
         try:
-            logger.info(f"[TTS] Synthesizing: '{clean[:80]}'")
+            from services.gemini_live_service import (
+                gemini_live_service
+            )
+            if gemini_live_service.api_key:
+                audio = await (
+                    gemini_live_service.text_to_speech(clean)
+                )
+                if audio:
+                    logger.info(
+                        f"[TTS] Gemini: {len(audio)} bytes"
+                    )
+                    return audio
+        except Exception as e:
+            logger.warning(f"[TTS] Gemini failed: {e}")
+
+        # Fallback to OpenAI TTS
+        return await self._openai_tts(clean)
+
+    async def _openai_tts(self, clean: str) -> bytes:
+        """Fallback to OpenAI TTS."""
+        if not self.client:
+            return b""
+        try:
+            logger.info(f"[TTS] Synthesizing with OpenAI: '{clean[:80]}'")
             response = self.client.audio.speech.create(
                 model="tts-1",
                 voice=self.voice,
@@ -49,10 +76,10 @@ class TTSService:
                 speed=1.0
             )
             audio_bytes = response.content
-            logger.info(f"[TTS] OK: {len(audio_bytes)} bytes")
+            logger.info(f"[TTS] OK (OpenAI): {len(audio_bytes)} bytes")
             return audio_bytes
         except Exception as e:
-            logger.error(f"[TTS] Error: {type(e).__name__}: {e}")
+            logger.error(f"[TTS] OpenAI Error: {type(e).__name__}: {e}")
             return b""
 
     def _clean_for_speech(self, text: str) -> str:
