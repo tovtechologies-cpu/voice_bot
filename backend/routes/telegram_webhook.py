@@ -197,7 +197,49 @@ async def telegram_webhook(request: Request):
     # Handle voice messages
     voice = message.get("voice") or message.get("audio")
     if voice:
-        audio_id = f"tg:{voice['file_id']}"
+        try:
+            from services.telegram import send_telegram_message as _send_tg
+            from services.whisper import _download_telegram_audio
+            from services.gemini_live_service import gemini_live_service
+            from services.whisper_service import whisper_service
+
+            file_id = voice['file_id']
+            audio_bytes = await _download_telegram_audio(file_id)
+
+            audio_id = f"tg:{file_id}"
+            if audio_bytes:
+                # Get session for context
+                session_ctx = await db.sessions.find_one({"phone": phone}, {"_id": 0})
+                context_str = f"session_state={session_ctx.get('state','NEW')}" if session_ctx else "session_state=NEW"
+
+                result = await gemini_live_service.transcribe_and_respond(
+                    audio_bytes,
+                    "audio/ogg",
+                    context_str
+                )
+
+                text_body = result["transcription"]
+                gemini_voice_response = result["response_audio"]
+
+                logger.info(
+                    f"[TG Gemini] Transcribed: '{text_body[:80]}'"
+                )
+
+                if not text_body:
+                    # Fallback to Whisper
+                    text_body = await whisper_service.transcribe(
+                        audio_bytes, "oga"
+                    )
+
+                text = text_body
+                # If we have a gemini voice response, we might want to send it?
+                # But handle_message will handle the conversation flow.
+                # The instructions say: "result = ... text_body = result['transcription']"
+                # and then it uses text_body.
+
+        except Exception as e:
+            logger.error(f"[TG Gemini] Error: {e}")
+            text = ""
 
     # Handle photos
     photos = message.get("photo")
